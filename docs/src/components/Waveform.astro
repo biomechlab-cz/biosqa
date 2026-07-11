@@ -1,0 +1,55 @@
+---
+// The signature noisy→clean waveform motif: enters jagged + red-tinted on the left, resolves into a smooth
+// teal-mint signal on the right, with a baseline row of 24 tier dots crossfading red→amber→green. Draws
+// once (~1.5s) then rests; frozen to the end-state under prefers-reduced-motion. Decorative (aria-hidden).
+interface Props { class?: string }
+const { class: klass = '' } = Astro.props;
+
+const W = 720, H = 220;
+const N = 300;
+let seed = 7;
+const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed / 0x7fffffff) * 2 - 1; };
+const pts: string[] = [];
+for (let i = 0; i < N; i++) {
+  const t = i / (N - 1);
+  const grow = 0.55 + 0.45 * t;                             // clean signal grows a touch left→right
+  const clean = Math.sin(t * Math.PI * 8) * 42 * grow + Math.sin(t * Math.PI * 22) * 6 * grow;
+  const noise = Math.max(0, 1 - t / 0.6) * 60 * rnd();      // decays to zero by ~60%
+  const y = H / 2 - clean * 0.78 - noise;
+  pts.push(`${(t * W).toFixed(1)},${y.toFixed(1)}`);
+}
+const path = `M ${pts.join(' L ')}`;
+const DOTS = 24;
+const dotColor = (p: number) => (p < 0.30 ? 'var(--q0)' : p < 0.5 ? 'var(--q1)' : p < 0.7 ? 'var(--q2)' : 'var(--q3)');
+---
+<div class={`wfm ${klass}`}>
+  <svg class="wfm-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-hidden="true">
+    <defs>
+      <linearGradient id="wfm-grad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2={W} y2="0">
+        <stop offset="0" stop-color="#FF7A85" /><stop offset="0.32" stop-color="#E0A32E" />
+        <stop offset="0.62" stop-color="#35D0BA" /><stop offset="1" stop-color="#1C8F80" />
+      </linearGradient>
+    </defs>
+    <path class="wfm-line" d={path} fill="none" stroke="url(#wfm-grad)" stroke-width="1.6"
+          stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />
+  </svg>
+  <div class="wfm-dots" aria-hidden="true">
+    {Array.from({ length: DOTS }, (_, i) => (
+      <span class="wfm-dot" style={`background:${dotColor(i / (DOTS - 1))}; animation-delay:${300 + i * 45}ms`}></span>
+    ))}
+  </div>
+</div>
+
+<style>
+  .wfm { display: grid; gap: 16px; }
+  .wfm-svg { width: 100%; height: 148px; display: block; }
+  .wfm-line { stroke-dasharray: 2600; stroke-dashoffset: 2600; animation: wfm-draw 1.5s cubic-bezier(.4,0,.2,1) .15s forwards; }
+  .wfm-dots { display: flex; gap: 4px; }
+  .wfm-dot { flex: 1; height: 5px; border-radius: 100px; opacity: 0; animation: wfm-fade .5s ease forwards; }
+  @keyframes wfm-draw { to { stroke-dashoffset: 0; } }
+  @keyframes wfm-fade { to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .wfm-line { animation: none; stroke-dashoffset: 0; }
+    .wfm-dot { animation: none; opacity: 1; }
+  }
+</style>

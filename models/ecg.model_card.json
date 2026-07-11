@@ -1,0 +1,234 @@
+{
+  "modality": "ecg",
+  "L_m": 2500,
+  "fs_hz": 250.0,
+  "class_order": [
+    "Q0_unacceptable",
+    "Q1_poor",
+    "Q2_acceptable",
+    "Q3_excellent"
+  ],
+  "normalization": {
+    "method": "none"
+  },
+  "training_data_hash": "dualbranch-synthaug",
+  "model_version": "v3-dualbranch-spectral",
+  "inputs": [
+    "x_raw",
+    "x_spec"
+  ],
+  "spectral_preprocessing": {
+    "fn": "spectral_band_channels",
+    "bands_hz": [
+      [
+        0.0,
+        0.7
+      ],
+      [
+        0.7,
+        8.0
+      ],
+      [
+        8.0,
+        40.0
+      ],
+      [
+        40.0,
+        125.0
+      ],
+      [
+        48.0,
+        62.0
+      ]
+    ],
+    "frame_s": 0.25,
+    "hop_s": 0.0625,
+    "n_channels": 5,
+    "note": "numpy Hann-STFT log band-power -> interp to L; app computes x_spec on the per-window z-scored signal, the graph z-scores both inputs per-window"
+  },
+  "heads": [
+    {
+      "name": "grade",
+      "output_name": "q_logits",
+      "kind": "ordinal",
+      "activation": "softmax",
+      "class_order": [
+        "Q0_unacceptable",
+        "Q1_poor",
+        "Q2_acceptable",
+        "Q3_excellent"
+      ]
+    },
+    {
+      "name": "usable",
+      "output_name": "bin_logits",
+      "kind": "binary",
+      "activation": "softmax",
+      "class_order": [
+        "unusable",
+        "usable"
+      ]
+    },
+    {
+      "name": "artifact",
+      "output_name": "type_logits",
+      "kind": "multilabel",
+      "activation": "sigmoid",
+      "class_order": [
+        "clean",
+        "motion",
+        "baseline_wander",
+        "muscle_emg",
+        "electrode_leadoff",
+        "eye_movement",
+        "powerline",
+        "burst_transient",
+        "clipping_flatline",
+        "dropout"
+      ],
+      "threshold": 0.5
+    }
+  ],
+  "calibration": {
+    "temperatures": {
+      "grade": 0.4,
+      "usable": 3.5484
+    },
+    "grade_ece": [
+      0.2557,
+      0.0654
+    ],
+    "usable_ece": [
+      0.1298,
+      0.0237
+    ]
+  },
+  "routing": "grade<-raw branch; usable+type<-raw+spectral fused",
+  "input_contract": {
+    "expects": "raw device-native signal (unfiltered)",
+    "reports": "quality of the signal AS PROVIDED \u2014 if the input was pre-filtered, this is the post-filter quality",
+    "caveat": "a pre-filtered but still-corrupted signal can be under-flagged (false-clean): an aggressive low-pass/band-limit strips the high-frequency cues the model keys on. The app runs biosqa.inference.prefilter.detect_prefiltering() to warn when the input looks pre-filtered."
+  },
+  "ood": {
+    "method": "conformal_aps",
+    "grade_nonconformity_threshold": 0.9682,
+    "alpha": 0.1
+  },
+  "novelty": {
+    "method": "mahalanobis_sqi",
+    "feature_names": [
+      "bSQI",
+      "tSQI",
+      "Rhythm reg.",
+      "Kurtosis",
+      "pSQI",
+      "basSQI",
+      "HF noise",
+      "Skewness"
+    ],
+    "mean": [
+      0.826877,
+      0.828258,
+      0.489885,
+      16.691417,
+      0.717237,
+      0.792,
+      0.032919,
+      1.00745
+    ],
+    "std": [
+      0.246598,
+      0.245968,
+      0.21917,
+      89.588764,
+      0.177257,
+      0.246925,
+      0.122321,
+      2.875521
+    ],
+    "inv_corr": [
+      [
+        1.76755,
+        -0.942751,
+        -0.188152,
+        -0.133614,
+        0.156933,
+        -0.294121,
+        0.267868,
+        -0.126306
+      ],
+      [
+        -0.942751,
+        1.856309,
+        -0.032249,
+        -0.034371,
+        -0.212065,
+        -0.251127,
+        0.288322,
+        -0.190452
+      ],
+      [
+        -0.188152,
+        -0.032249,
+        1.078818,
+        0.188159,
+        -0.033313,
+        0.222398,
+        -0.183968,
+        0.071264
+      ],
+      [
+        -0.133614,
+        -0.034371,
+        0.188159,
+        1.545818,
+        0.040843,
+        -0.1063,
+        -0.266574,
+        0.820932
+      ],
+      [
+        0.156933,
+        -0.212065,
+        -0.033313,
+        0.040843,
+        1.504396,
+        -0.014575,
+        0.850286,
+        0.249266
+      ],
+      [
+        -0.294121,
+        -0.251127,
+        0.222398,
+        -0.1063,
+        -0.014575,
+        1.268991,
+        -0.36937,
+        -0.188938
+      ],
+      [
+        0.267868,
+        0.288322,
+        -0.183968,
+        -0.266574,
+        0.850286,
+        -0.36937,
+        1.835172,
+        0.229981
+      ],
+      [
+        -0.126306,
+        -0.190452,
+        0.071264,
+        0.820932,
+        0.249266,
+        -0.188938,
+        0.229981,
+        1.608077
+      ]
+    ],
+    "d2_threshold": 36.9192,
+    "reference": "data/store_v6 n=6000"
+  }
+}

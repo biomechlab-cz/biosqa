@@ -1,0 +1,28 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { withBase } from '../lib/site';
+---
+<BaseLayout title="Page not found" description="That page doesn't exist." navVariant="docs">
+  <div class="nf">
+    <div class="nf-code mono">Q0</div>
+    <h1>Page not found</h1>
+    <p class="text-2">This URL didn't resolve — like a stretch of signal the model can't grade, it's best discarded. Head back to solid ground.</p>
+    <div class="nf-cta">
+      <a class="btn btn-primary" href={withBase('/')}>Home</a>
+      <a class="btn btn-ghost" href={withBase('/docs/getting-started/')}>Browse docs</a>
+    </div>
+  </div>
+</BaseLayout>
+<style>
+  .nf { max-width: 560px; margin: 0 auto; padding: 120px 24px 96px; text-align: center; }
+  .nf-code {
+    display: inline-grid; place-items: center; width: 64px; height: 64px; border-radius: 14px;
+    font-size: 22px; font-weight: 700; color: var(--q0); margin-bottom: 24px;
+    border: 1px solid color-mix(in srgb, var(--q0) 55%, transparent);
+    background: repeating-linear-gradient(45deg,
+      color-mix(in srgb, var(--q0) 24%, transparent) 0 5px,
+      color-mix(in srgb, var(--q0) 10%, transparent) 5px 10px);
+  }
+  .nf p { font-size: 16px; margin: 12px 0 28px; }
+  .nf-cta { display: flex; gap: 12px; justify-content: center; }
+</style>

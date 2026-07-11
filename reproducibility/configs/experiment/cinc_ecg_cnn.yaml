@@ -1,0 +1,30 @@
+# Hypothesis 1 (gates the pipeline): does a 1D-CNN reach competitive CinC-2011
+# ECG-SQA macro-F1 / Cohen's kappa? Native binary labels (acceptable/unacceptable),
+# 12-lead 10 s @ 500 Hz, record-level stratified split (challenge convention).
+experiment_name: cinc_ecg_cnn
+seed: 0
+model:
+  backbone: cnn1d
+  d_model: 128
+  n_classes: 2               # native binary
+  backbone_cfg:
+    n_blocks: 4
+  modalities: [ecg]
+modalities:
+  ecg: {patch_len: 100, stride: 80, c_in: 12, max_tokens: 64}   # (5000-100)/80+1 = 62 tokens
+train:
+  epochs: 40
+  lr: 1.0e-3
+  batch_size: 64
+  loss: ce
+  class_weights: balanced    # ~773 acceptable / 225 unacceptable
+  patience: 10
+  monitor: macro_f1
+data:
+  source: cinc2011
+  modality: ecg
+  label_scheme: native
+  window_length: 5000
+export:
+  enabled: true
+  quantize: true

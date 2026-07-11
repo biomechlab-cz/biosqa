@@ -1,0 +1,78 @@
+# =============================================================================
+# BioSQA Studio — desktop application (Plan 2, plans/02_DESKTOP_APP_ENGINEERING_PLAN.md)
+# This is a SEPARATE project from the repo-root `biosqa` package (Plan 1 / ML
+# training engine). Dependencies here are deliberately DISJOINT from Plan 1's
+# training stack (no torch, no mamba, no transformers/mlflow/optuna/etc.) so
+# the frozen installer stays small and starts fast. The app consumes Plan 1's
+# artifacts (models/*.onnx + models/*.model_card.json) through the contract
+# documented in README.md — it never imports Plan 1's training code.
+# =============================================================================
+[project]
+name = "biosqa-studio"
+version = "0.0.1"
+description = "BioSQA Studio — desktop viewer for GB-scale biosignal recordings with ONNX-driven quality segmentation overlays (PySide6 + QML)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Marek Sokol", email = "mareksokol98@gmail.com" }]
+keywords = ["signal-quality", "ecg", "ppg", "eeg", "eda", "biosignal", "onnx", "desktop", "qt"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Healthcare Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+dependencies = [
+    "PySide6",         # Qt 6 bindings (LGPL) — QQmlApplicationEngine + custom scene-graph item
+    "pyqtgraph",        # kept as an offline/debugging viewer only (see scenegraph/ note); not on the QML hot path
+    "numpy",
+    "scipy",
+    "zarr>=3",          # Zarr v3 store + sharding for the out-of-core waveform + pyramid layer
+    "dask",
+    "wfdb",             # PhysioNet WFDB (.dat/.hea) reader, preload=False
+    "mne",              # EDF/EDF+ reader, preload=False
+    "onnxruntime",      # CPU EP — runs Plan 1's exported FP32 models, nothing else
+    "tsdownsample",     # MinMaxLTTB decimation kernel for the live (non-precomputed) resolution
+    "pyarrow",
+    "polars",
+]
+
+[project.urls]
+Homepage = "https://github.com/sokolmarek/biosqa"
+Repository = "https://github.com/sokolmarek/biosqa"
+Issues = "https://github.com/sokolmarek/biosqa/issues"
+
+# `biosqa-studio` launches the app after `pip install .` (GUI entry point → no console
+# window on Windows); the module form `python -m biosqa.main` also works.
+[project.gui-scripts]
+biosqa-studio = "biosqa.main:main"
+
+[project.optional-dependencies]
+# Packaging toolchains — only needed when producing a distributable build,
+# see build/biosqa.spec and build/NUITKA_BUILD_NOTES.md.
+packaging = ["pyinstaller", "nuitka"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["biosqa"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"biosqa/ui" = "biosqa/ui"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://sokolmarek.github.io/biosqa/sitemap-index.xml

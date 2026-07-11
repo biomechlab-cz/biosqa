@@ -1,0 +1,31 @@
+# Store-backed ECG training on the harmonized Q0..Q3 scale (canonical 250 Hz,
+# single lead, 10 s -> [1, 2500]). Point store_dir at a multi-dataset store
+# (cinc2011 + but_qdb + edb + ...) once those loaders land; CinC-only here just
+# validates the store->train->eval path (only Q0/Q2 present, so macro-F1 over 4
+# classes reads low — inspect per-class F1 for Q0/Q2).
+experiment_name: ecg_store
+seed: 0
+model:
+  backbone: cnn1d
+  d_model: 128
+  n_classes: 4
+  backbone_cfg: {n_blocks: 4}
+  modalities: [ecg]
+modalities:
+  ecg: {patch_len: 100, stride: 50, c_in: 1, max_tokens: 64}   # (2500-100)/50+1 = 49 tokens
+train:
+  epochs: 25
+  lr: 1.0e-3
+  batch_size: 64
+  loss: focal
+  class_weights: balanced
+  patience: 6
+  monitor: macro_f1
+data:
+  source: store
+  store_dir: data/store_cinc
+  modality: ecg
+  augment: true
+  window_length: 2500
+export:
+  enabled: false

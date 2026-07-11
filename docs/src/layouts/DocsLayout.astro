@@ -1,0 +1,136 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import { DOCS_NAV, DOCS_FLAT, withBase } from '../lib/site';
+import type { MarkdownHeading } from 'astro';
+
+interface Props { title: string; description: string; slug: string; headings: MarkdownHeading[] }
+const { title, description, slug, headings } = Astro.props;
+
+const idx = DOCS_FLAT.findIndex((d) => d.slug === slug);
+const prev = idx > 0 ? DOCS_FLAT[idx - 1] : null;
+const next = idx >= 0 && idx < DOCS_FLAT.length - 1 ? DOCS_FLAT[idx + 1] : null;
+const section = DOCS_NAV.find((s) => s.items.some((it) => it.slug === slug));
+const toc = headings.filter((h) => h.depth === 2 || h.depth === 3);
+---
+<BaseLayout title={title} description={description} wide navVariant="docs">
+  <div class="docs">
+    <div class="sidebar-scrim" data-sidebar-scrim aria-hidden="true"></div>
+    <aside class="sidebar" aria-label="Docs navigation">
+      <nav>
+        {DOCS_NAV.map((sec) => (
+          <div class="sb-sec">
+            <div class="sb-label">{sec.label}</div>
+            <ul>
+              {sec.items.map((it) => (
+                <li><a href={withBase(`/docs/${it.slug}/`)} class:list={['sb-link', it.slug === slug && 'active']}
+                       aria-current={it.slug === slug ? 'page' : undefined}>{it.title}</a></li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </nav>
+    </aside>
+
+    <article class="doc-article">
+      <nav class="breadcrumb mono" aria-label="Breadcrumb">
+        <a href={withBase('/docs/getting-started/')}>Docs</a> <span>/</span> <span>{section?.label ?? 'Reference'}</span> <span>/</span> <span class="crumb-here">{title}</span>
+      </nav>
+      {section && <div class="doc-eyebrow microlabel">{section.label}</div>}
+      <h1>{title}</h1>
+      <p class="doc-lede text-2">{description}</p>
+      <div class="doc-body">
+        <slot />
+      </div>
+      <nav class="prevnext" aria-label="Pagination">
+        {prev ? <a class="pn pn-prev" href={withBase(`/docs/${prev.slug}/`)}><span class="pn-dir mono">← Previous</span><span class="pn-title">{prev.title}</span></a> : <span></span>}
+        {next ? <a class="pn pn-next" href={withBase(`/docs/${next.slug}/`)}><span class="pn-dir mono">Next →</span><span class="pn-title">{next.title}</span></a> : <span></span>}
+      </nav>
+    </article>
+
+    <aside class="toc" aria-label="On this page">
+      {toc.length > 0 && <>
+        <div class="toc-label microlabel">On this page</div>
+        <ul>
+          {toc.map((h) => (
+            <li class:list={[h.depth === 3 && 'toc-sub']}><a href={`#${h.slug}`} data-toc={h.slug}>{h.text}</a></li>
+          ))}
+        </ul>
+      </>}
+    </aside>
+  </div>
+</BaseLayout>
+
+<script is:inline>
+  // TOC scroll-spy: highlight the section currently in view
+  (() => {
+    const links = Array.from(document.querySelectorAll('[data-toc]'));
+    if (!links.length || !('IntersectionObserver' in window)) return;
+    const map = new Map(links.map((l) => [l.getAttribute('data-toc'), l]));
+    const heads = Array.from(document.querySelectorAll('.doc-body h2[id], .doc-body h3[id]'));
+    let active = null;
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((en) => { if (en.isIntersecting) active = en.target.id; });
+      links.forEach((l) => l.classList.toggle('active', l.getAttribute('data-toc') === active));
+    }, { rootMargin: '-72px 0px -72% 0px' });
+    heads.forEach((h) => io.observe(h));
+  })();
+</script>
+
+<style>
+  .docs { max-width: 1360px; margin: 0 auto; display: grid; grid-template-columns: 266px minmax(0, 1fr) 232px; align-items: start; }
+  .sidebar { position: sticky; top: 57px; height: calc(100vh - 57px); overflow-y: auto; border-right: 1px solid var(--border); padding: 26px 18px 40px; }
+  .sb-sec { margin-bottom: var(--sp-4); }
+  .sb-label { font-size: 9.5px; letter-spacing: 0.15em; padding: 0 10px; margin-bottom: 9px; }
+  .sidebar ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+  .sb-link { display: block; padding: 6px 10px; border-radius: var(--r-control); border-left: 2px solid transparent; color: var(--text-2); font-size: 13.5px; }
+  .sb-link:hover { background: var(--hover); color: var(--text); }
+  .sb-link.active { color: var(--accent); background: var(--pill-bg-c); border-left-color: var(--accent); font-weight: 500; }
+
+  .doc-article { min-width: 0; padding: 38px clamp(24px, 4vw, 64px) 80px; }
+  .doc-article > * { max-width: 760px; }
+  .breadcrumb { font-size: 11.5px; display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; color: var(--text-muted); }
+  .breadcrumb a { color: var(--text-muted); } .breadcrumb a:hover { color: var(--text); }
+  .crumb-here { color: var(--text-2); }
+  .doc-eyebrow { color: var(--accent); margin-bottom: 8px; }
+  .doc-article h1 { font-size: clamp(30px, 4vw, 42px); line-height: 1.1; }
+  .doc-lede { font-size: 18px; line-height: 1.6; margin: 14px 0 40px; }
+  .doc-body { max-width: 760px; }
+  .doc-body :global(h2) { font-size: 24px; scroll-margin-top: 76px; margin-top: var(--sp-8); }
+  .doc-body :global(h3) { scroll-margin-top: 76px; }
+  .doc-body :global(ul), .doc-body :global(ol) { padding-left: 1.3em; }
+  .doc-body :global(li) { margin-bottom: 6px; }
+  .doc-body :global(table), .doc-body :global(.table-wrap) { margin: var(--sp-4) 0; }
+  .doc-body :global(blockquote) {
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface)); border-radius: var(--r-card);
+    margin: var(--sp-5) 0; padding: 14px 18px; color: var(--text-2);
+  }
+  .doc-body :global(blockquote p:last-child) { margin-bottom: 0; }
+
+  .prevnext { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: var(--sp-8); padding-top: var(--sp-5); border-top: 1px solid var(--border); max-width: 760px; }
+  .pn { display: grid; gap: 4px; padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--r-card); color: var(--text); }
+  .pn:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); color: var(--text); }
+  .pn-dir { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); }
+  .pn-title { font-size: 14.5px; font-weight: 600; }
+  .pn-next { text-align: right; }
+
+  .toc { position: sticky; top: 57px; padding: 38px 20px 0 0; }
+  .toc-label { margin-bottom: 10px; letter-spacing: 0.15em; font-size: 9.5px; }
+  .toc ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--border); }
+  .toc li a { display: block; padding: 5px 12px; margin-left: -1px; border-left: 2px solid transparent; color: var(--text-muted); font-size: 13px; }
+  .toc li a:hover { color: var(--text); }
+  .toc li a.active { border-left-color: var(--accent); color: var(--text); }
+  .toc-sub a { padding-left: 22px; font-size: 12px; }
+
+  .sidebar-scrim { display: none; }
+  @media (max-width: 1120px) { .docs { grid-template-columns: 266px 1fr; } .toc { display: none; } }
+  @media (max-width: 840px) {
+    .docs { grid-template-columns: 1fr; }
+    .sidebar { position: fixed; top: 57px; left: 0; z-index: 40; width: 280px; background: var(--bg);
+      transform: translateX(-101%); transition: transform .2s ease; }
+    :global(body.sidebar-open) .sidebar { transform: none; }
+    .sidebar-scrim { display: block; position: fixed; inset: 57px 0 0; background: rgba(0,0,0,.5); z-index: 39; opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+    :global(body.sidebar-open) .sidebar-scrim { opacity: 1; pointer-events: auto; }
+    .doc-article { padding: 28px 20px 64px; }
+  }
+</style>

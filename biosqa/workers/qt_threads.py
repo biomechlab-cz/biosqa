@@ -1,0 +1,580 @@
+"""QThreadPool/QRunnable workers: decimation, chunk loading, inference, transcode (Plan 2 §9).
+
+Each ``QRunnable.run()`` below does pure numpy/library work and emits its
+result through the matching ``workers.signals`` carrier -- never touches
+``QQuickItem``/scene-graph APIs directly (that discipline is enforced by
+convention + code review per Plan 2 §14, since Python/Qt has no compiler-
+level way to forbid it).
+"""
+
+from __future__ import annotations
+
+import numpy as np
+from PySide6.QtCore import QRunnable
+
+from biosqa.inference.data_quality import record_quality
+from biosqa.inference.llm_audit import audit_segment
+from biosqa.inference.onnx_runner import OnnxRunner
+from biosqa.inference.segmenter import run_length_encode, threshold_artifact_labels
+from biosqa.io.loaders import read_window
+from biosqa.workers.signals import (
+    AuditWorkerSignals,
+    SaliencyWorkerSignals,
+    InferenceWorkerSignals,
+    LoadResampleWorkerSignals,
+    StreamWorkerSignals,
+    TranscodeWorkerSignals,
+)
+
+#: cap on the in-memory full-resolution plot cache (matches SignalViewController.loadTrace).
+_PLOT_CACHE_CAP = 400000
+
+
+def resample_signal(sig, fs_in: float, fs_out: float):
+    """Resample a 1-D signal ``fs_in -> fs_out`` (anti-aliased where possible). Off-thread helper
+    shared by :class:`LoadResampleTask` and the Coordinator so the full-signal resample never runs
+    on the GUI thread."""
+    sig = np.asarray(sig, dtype=np.float32)
+    if fs_in <= 0 or abs(fs_in - fs_out) < 1e-3 or sig.size < 2:
+        return sig
+    try:  # scipy ships with mne (an app dep); poly resample is anti-aliased
+        from fractions import Fraction
+
+        from scipy.signal import resample_poly
+
+        frac = Fraction(float(fs_out) / float(fs_in)).limit_denominator(1000)
+        return resample_poly(sig, frac.numerator, frac.denominator).astype(np.float32)
+    except Exception:  # pragma: no cover - linear fallback if scipy is unavailable
+        n_out = max(2, int(round(sig.size * fs_out / fs_in)))
+        return np.interp(
+            np.linspace(0.0, 1.0, n_out), np.linspace(0.0, 1.0, sig.size), sig
+        ).astype(np.float32)
+
+
+def build_plot_cache(raw, fs: float, cap: int = _PLOT_CACHE_CAP):
+    """Full-resolution primary-channel plot cache ``(full_t, full_y, lo, hi)`` — the work
+    SignalViewController.loadTrace used to do inline on the GUI thread."""
+    raw = np.asarray(raw, dtype=np.float64)
+    fs = float(fs) or 1.0
+    t = np.arange(raw.shape[0], dtype=np.float64) / fs
+    if raw.shape[0] > cap:
+        stride = int(np.ceil(raw.shape[0] / cap))
+        full_t = np.ascontiguousarray(t[::stride])
+        full_y = np.ascontiguousarray(raw[::stride])
+    else:
+        full_t = np.ascontiguousarray(t)
+        full_y = np.ascontiguousarray(raw)
+    if raw.size:
+        lo, hi = float(raw.min()), float(raw.max())
+    else:
+        lo, hi = -1.0, 1.0
+    return full_t, full_y, lo, (hi if hi > lo else lo + 1.0)
+
+
+class LoadResampleTask(QRunnable):
+    """Off-thread OPEN work (Plan 2 §9): full read of the inference channel + resample to the
+    model rate, plus the primary-channel plot cache — everything that used to freeze the GUI thread
+    in ``Coordinator.on_recording_opened``. Emits one ``ready`` payload the Coordinator routes back
+    to the (already-bound) viewmodels on the GUI thread; the event loop stays responsive throughout.
+    """
+
+    def __init__(self, handle, infer_ch: str, plot_ch: str, plot_channels: list,
+                 fs_out: float, modality: str, signals: LoadResampleWorkerSignals):
+        super().__init__()
+        self.handle = handle
+        self.infer_ch = infer_ch
+        self.plot_ch = plot_ch
+        self.plot_channels = list(plot_channels)
+        self.fs_out = float(fs_out)
+        self.modality = modality
+        self.signals = signals
+
+    def run(self) -> None:
+        try:
+            h = self.handle
+            fs_in = float(h.fs_hz[self.infer_ch])
+            n = int(h.n_samples[self.infer_ch])
+            raw_infer = np.asarray(read_window(h, [self.infer_ch], 0, n), dtype=np.float32).reshape(-1)
+            sig = resample_signal(raw_infer, fs_in, self.fs_out)   # inference signal @ model rate
+
+            plot_fs = float(h.fs_hz[self.plot_ch])
+            n_plot = int(h.n_samples[self.plot_ch])
+            if self.plot_ch == self.infer_ch:
+                raw_plot = raw_infer                                # avoid a second disk read
+            else:
+                raw_plot = np.asarray(read_window(h, [self.plot_ch], 0, n_plot)).reshape(-1)
+            full_t, full_y, trace_lo, trace_hi = build_plot_cache(raw_plot, plot_fs)
+
+            self.signals.ready.emit({
+                "modality": self.modality, "handle": h, "sig": sig,
+                "fs_in": fs_in, "fs_out": self.fs_out,
+                "plot_channels": self.plot_channels, "plot_fs": plot_fs,
+                "full_t": full_t, "full_y": full_y,
+                "trace_lo": trace_lo, "trace_hi": trace_hi,
+                "n_samples_primary": n_plot,
+            })
+        except Exception as exc:  # noqa: BLE001 - surface to the UI, don't crash the pool
+            self.signals.failed.emit(self.modality, str(exc))
+
+
+class InferenceTask(QRunnable):
+    """Runs sliding-window ONNX inference + RLE segmentation for one modality (Plan 2 §7.2/§7.3)."""
+
+    def __init__(
+        self,
+        runner: OnnxRunner,
+        signal,
+        window_stride_sec: float,
+        window_length_sec: float,
+        signals: InferenceWorkerSignals,
+        overlap: float = 0.0,
+        guard_enabled: bool = True,
+        bsqi_threshold: float = 0.72,
+        recovery_enabled: bool = True,
+        refine_enabled: bool = True,
+    ):
+        super().__init__()
+        self.runner = runner
+        self.signal = signal
+        self.window_stride_sec = window_stride_sec
+        self.window_length_sec = window_length_sec
+        self.signals = signals
+        self.overlap = float(overlap)
+        self.guard_enabled = bool(guard_enabled)
+        self.bsqi_threshold = float(bsqi_threshold)
+        self.recovery_enabled = bool(recovery_enabled)
+        self.refine_enabled = bool(refine_enabled)
+
+    def run(self) -> None:
+        try:
+            if self.runner.card is None:
+                raise RuntimeError("OnnxRunner.load() was not called before InferenceTask.run()")
+            card = self.runner.card
+            # One multi-head pass: the ordinal grade drives the tier track; the
+            # optional multilabel artifact head decorates each window with its
+            # glitch-type tags (empty for legacy single-head models).
+            pred = self.runner.run_sliding_window_multihead(self.signal, overlap=self.overlap)
+            q_probs = pred.primary
+            grade_order = card.primary_head.class_order
+            worst_tier = grade_order[0].split("_")[0] if grade_order else "Q0"
+            # Fail-safe on a NON-FINITE model output: a NaN/inf input window passes through
+            # normalize_window's card-constant mean/std to a NaN softmax. argmax would still pick Q0, but
+            # the confidence AND uncertainty would be NaN and get RLE-encoded + EXPORTED. Replace such rows
+            # with a uniform distribution (→ worst tier Q0, maximal entropy) so every downstream derivation
+            # (confidence, uncertainty, conformal) stays finite, then force zero confidence — a garbage
+            # window degrades to a low-confidence 'unusable', never a NaN.
+            non_finite = np.zeros(0, dtype=bool)
+            if len(q_probs):
+                q_probs = np.asarray(q_probs, dtype=np.float64).copy()
+                non_finite = ~np.isfinite(q_probs).all(axis=1)
+                if non_finite.any():
+                    q_probs[non_finite] = 1.0 / q_probs.shape[1]
+                # Calibrate ONCE via the card's grade temperature so ALL user-facing UQ surfaces
+                # (confidence, entropy-uncertainty, conformal set) come from the SAME calibrated
+                # distribution the conformal threshold was fit on — rather than confidence/uncertainty on
+                # the raw (mis-calibrated) softmax while only conformal was scaled. Monotonic → tiers
+                # (argmax) unchanged; a garbage window's uniform row stays uniform.
+                _T = float(getattr(card, "grade_temperature", 1.0) or 1.0)
+                if _T != 1.0:
+                    from biosqa.inference.conformal import temperature_scale
+                    q_probs = temperature_scale(q_probs, _T)
+            # Emit the SHORT tier code ("Q0".."Q3") the filters / legend / band delegate expect —
+            # class_order carries full labels ("Q0_unacceptable"), so split on "_" (a no-op if the card
+            # already uses short codes).
+            tiers = [grade_order[i].split("_")[0] for i in q_probs.argmax(axis=1)] if len(q_probs) else []
+            confidences = q_probs.max(axis=1) if len(q_probs) else q_probs
+            if len(confidences) and non_finite.any():
+                confidences = np.asarray(confidences, dtype=np.float64).copy()
+                confidences[non_finite] = 0.0
+
+            # False-clean GUARD + record DATA-QUALITY (both best-effort; a failure here
+            # must never break the primary segmentation). The integrity override re-flags
+            # confidently-clean windows that the filter-robust bSQI marks corrupt on
+            # pre-filtered input -> force them to the worst tier so the track shows them.
+            guard = self._guard_report(tiers, worst_tier, pred) if self.guard_enabled else None
+            self._data_quality_report()
+
+            artifacts_per_window = None
+            art = card.artifact_head
+            if art is not None:
+                type_probs = pred.get(art.name)
+                if type_probs is not None and len(type_probs):
+                    artifacts_per_window = threshold_artifact_labels(
+                        type_probs, art.class_order, art.threshold
+                    )
+
+            # Advisory recoverability: a SECOND pass on a filtered copy → which poor windows a
+            # standard filter would lift to usable (never re-grades; the raw tier stays authoritative).
+            rec_pw, rtier_pw = (
+                self._recoverability(tiers, grade_order)
+                if self.recovery_enabled and len(tiers) else (None, None)
+            )
+            # Predictive uncertainty (research3 Rec.6): normalized entropy of the softmax the model
+            # already returned — FREE (the workflow experiment found 8x TTA adds ~nothing over this).
+            uncertainty_pw = self._softmax_uncertainty(q_probs)
+            # Task-relative rate-usability: poor-morphology windows whose HR is still recoverable
+            # (distinct from recoverability — catches wander/powerline the filtered pass misses).
+            rate_pw, hr_pw = self._rate_usability(tiers)
+            # Conformal APS prediction set (research3 UQ): decode a coverage-guaranteed set per segment from
+            # the already-calibrated grade distribution (q_probs was temperature-scaled above). Only when the
+            # card ships a conformal threshold (else empty — e.g. modalities whose deployed model predates
+            # the conformal calibration).
+            conf_thr = getattr(card, "conformal_threshold", None)
+            grade_probs_cal = q_probs if (conf_thr is not None and len(q_probs)) else None
+
+            intervals = run_length_encode(
+                tiers, confidences, self.window_stride_sec, self.window_length_sec,
+                artifacts_per_window=artifacts_per_window,
+                recoverable_per_window=rec_pw, recovered_tier_per_window=rtier_pw,
+                uncertainty_per_window=uncertainty_pw,
+                rate_usable_per_window=rate_pw, hr_bpm_per_window=hr_pw,
+                grade_probs_per_window=grade_probs_cal,
+                class_order=[g.split("_")[0] for g in grade_order],
+                conformal_threshold=conf_thr,
+            )
+            # Boundary refinement: localize a poor segment to its actual artefact using a fine
+            # per-bin badness score (the model's coarse window smears a short burst; overlap can't
+            # fix that — it makes it wider). Advisory; never breaks the primary segmentation.
+            if self.refine_enabled:
+                try:
+                    from biosqa.inference.refine import refine_intervals
+                    intervals = refine_intervals(intervals, self.signal, float(card.fs_hz),
+                                                 self.runner.modality)
+                except Exception:  # noqa: BLE001
+                    pass
+            self.signals.intervalsReady.emit(self.runner.modality, intervals)
+            if guard is not None:
+                self.signals.guardReady.emit(self.runner.modality, guard)
+        except Exception as exc:  # noqa: BLE001
+            self.signals.failed.emit(self.runner.modality, str(exc))
+
+    @staticmethod
+    def _softmax_uncertainty(q_probs):
+        """Per-window normalized predictive entropy of the grade softmax (0=certain, 1=uniform).
+        Free — computed from probabilities already returned; no extra inference."""
+        if q_probs is None or not len(q_probs):
+            return None
+        p = np.clip(np.asarray(q_probs, dtype=np.float64), 1e-12, 1.0)
+        k = p.shape[1]
+        return (-(p * np.log(p)).sum(axis=1) / np.log(k)) if k > 1 else np.zeros(len(p))
+
+    def _rate_usability(self, tiers: list):
+        """Per-window rate-usability for ECG/PPG: for POOR windows only (cheap — the quality proxy is
+        skipped on already-usable windows), is the heart/pulse RATE still reliably recoverable despite
+        poor morphology? ECG gates on bSQI, PPG on pulse-band regularity (see task_usability). Returns
+        ``(rate_usable[bool array], hr_bpm[float array])`` or ``(None, None)``."""
+        modality = self.runner.modality
+        if modality not in ("ecg", "ppg") or not len(tiers):
+            return None, None
+        try:
+            from biosqa.inference.preprocess import make_windows
+            from biosqa.inference.task_usability import rate_usability
+
+            card = self.runner.card
+            fs = float(card.fs_hz)
+            windows = make_windows(self.signal, card, overlap=self.overlap)
+            n = min(len(tiers), len(windows))
+            rate = np.zeros(n, dtype=bool)
+            hr = np.zeros(n, dtype=np.float64)
+            for i in range(n):
+                if tiers[i] not in ("Q0", "Q1"):     # only poor windows can gain a "rate-usable" tag
+                    continue
+                w = np.asarray(windows[i], dtype=np.float64)
+                w = w[0] if w.ndim == 2 else w
+                r = rate_usability(w, fs, modality)
+                rate[i] = r["rate_usable"]
+                hr[i] = r["hr_bpm"]
+            return rate, hr
+        except Exception:  # noqa: BLE001 - advisory only
+            return None, None
+
+    def _recoverability(self, tiers: list, grade_order):
+        """Second inference pass on a filtered copy: which poor windows become usable after a
+        standard per-modality filter? For ECG/PPG the call is corroborated by the filter-robust
+        two-detector bSQI on the FILTERED window, so the model merely being *fooled* by filtering
+        (the false-clean failure) is not mistaken for genuine recovery. Returns
+        ``(recoverable[bool array], recovered_tier[list[str]])`` aligned to ``tiers``, or
+        ``(None, None)`` on any failure — recovery is advisory and never breaks segmentation."""
+        try:
+            from biosqa.inference.preprocess import make_windows
+            from biosqa.inference.recover import filter_for_modality, recoverable_windows
+
+            card = self.runner.card
+            fs = float(card.fs_hz)
+            modality = self.runner.modality
+            filtered = filter_for_modality(self.signal, fs, modality)
+            gf = self.runner.run_sliding_window_multihead(filtered, overlap=self.overlap).primary
+            if not len(gf):
+                return None, None
+            filtered_tiers = [grade_order[i].split("_")[0] for i in gf.argmax(axis=1)]
+            m = min(len(tiers), len(filtered_tiers))
+            rec, rtier = recoverable_windows(list(tiers[:m]), filtered_tiers[:m], grade_order)
+            if modality == "ecg" and rec.any():      # bSQI corroboration is ECG-only (PPG = NN-only)
+                from biosqa.inference.integrity import bsqi
+
+                fwins = make_windows(filtered, card, overlap=self.overlap)
+                for i in np.flatnonzero(rec):
+                    if i < len(fwins):
+                        w = np.asarray(fwins[i], dtype=np.float64)
+                        w = w[0] if w.ndim == 2 else w
+                        if bsqi(w, fs) < self.bsqi_threshold:  # detectors still disagree → deceptive
+                            rec[i] = False
+                            rtier[i] = ""
+            if m < len(tiers):                                  # windowing mismatch → pad, don't crash
+                rec = np.concatenate([rec, np.zeros(len(tiers) - m, dtype=bool)])
+                rtier = list(rtier) + [""] * (len(tiers) - m)
+            return rec, list(rtier)
+        except Exception:  # noqa: BLE001 - advisory only
+            return None, None
+
+    def _guard_report(self, tiers: list, worst_tier: str, prediction=None):
+        """Run the false-clean guard and apply its per-window integrity override to ``tiers``
+        in place. Reuses the already-computed ``prediction`` (no second forward pass). Returns
+        the guard report dict (or None on any failure)."""
+        try:
+            guard = self.runner.guard_record(self.signal, prediction, overlap=self.overlap,
+                                              bsqi_corrupt=self.bsqi_threshold)
+            mask = guard.get("override_mask")
+            if mask is not None and len(mask) == len(tiers):
+                for i, over in enumerate(mask):
+                    if bool(over):
+                        tiers[i] = worst_tier
+            return {"prefiltered": bool(guard.get("prefiltered")),
+                    "reasons": list(guard.get("reasons", [])),
+                    "n_overridden": int(guard.get("n_overridden", 0)),
+                    "score": float(guard.get("score", 0.0))}
+        except Exception:  # noqa: BLE001 - guard is advisory; never break inference
+            return None
+
+    def _data_quality_report(self) -> None:
+        """Emit the record-level data-quality report (completeness / validity / stability)."""
+        try:
+            from biosqa.inference.input_sanity import input_sanity
+
+            card = self.runner.card
+            dq = record_quality(self.signal, float(card.fs_hz))
+            reg = input_sanity(self.signal, float(card.fs_hz))   # acquisition-regime / domain-shift report
+            regime_flags = list(reg.flags)
+            nov_frac, nov_top = self._novelty_fraction()         # feature-space novelty vs the training set
+            if nov_frac > 0.08:                                  # >> the calibrated ~1% in-dist rate
+                regime_flags.append(
+                    f"{nov_frac:.0%} of windows have signal-quality features unlike the training set"
+                    + (f" (mainly {nov_top})" if nov_top else "")
+                    + " — possible new device/cohort; scores may not transfer.")
+            self.signals.dataQualityReady.emit(self.runner.modality, {
+                "completeness": dq.completeness, "usable": dq.usable, "flags": list(dq.flags),
+                "missing_frac": dq.missing_frac, "flatline_frac": dq.flatline_frac,
+                "clipping_frac": dq.clipping_frac, "n_dropout_gaps": dq.n_dropout_gaps,
+                "longest_gap_s": dq.longest_gap_s, "duration_s": dq.duration_s,
+                "dsi": reg.dsi, "regime_flags": regime_flags,
+                "f_edge_hz": reg.f_edge_hz, "band_ratio": reg.band_ratio,
+                "novelty_frac": nov_frac, "novelty_top": nov_top,
+            })
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _novelty_fraction(self):
+        """Fraction of windows whose interpretable SQI vector is novel (Mahalanobis D² above the card's
+        reference threshold) + the SQI that most often explains it. Robust cross-dataset signal: a new
+        device/cohort lifts this far above the calibrated ~1% in-distribution rate. ``(0.0, "")`` when the
+        card ships no novelty reference. Sub-sampled (≤200 windows) so it stays cheap on long records."""
+        card = self.runner.card
+        block = getattr(card, "novelty", None)
+        if not block:
+            return 0.0, ""
+        try:
+            from biosqa.inference.novelty import novelty_distance, sqi_feature_vector
+            from biosqa.inference.preprocess import make_windows
+
+            thr = float(block.get("d2_threshold", 1e18))
+            fs = float(card.fs_hz)
+            wins = make_windows(self.signal, card, overlap=self.overlap)
+            if not len(wins):
+                return 0.0, ""
+            step = max(1, len(wins) // 200)
+            novel_flags, tops = [], []
+            for w in wins[::step]:
+                ww = np.asarray(w, dtype=np.float64)
+                ww = ww[0] if ww.ndim == 2 else ww
+                feats, names = sqi_feature_vector(ww, fs, self.runner.modality)
+                d2, top = novelty_distance(feats, block, names)     # names guard: skip if reordered
+                novel_flags.append(d2 > thr)
+                if d2 > thr and top:
+                    tops.append(top)
+            frac = float(np.mean(novel_flags)) if novel_flags else 0.0
+            return frac, (max(set(tops), key=tops.count) if tops else "")
+        except Exception:  # noqa: BLE001 - advisory only
+            return 0.0, ""
+
+
+class ChannelCacheTask(QRunnable):
+    """Build one channel's bounded plot cache off-thread (block-wise, so a large channel neither
+    blows memory nor freezes the GUI). Dispatched by SignalViewController when a non-primary lane is
+    toggled on — the lane draws when ``ready`` fires."""
+
+    def __init__(self, handle, channel: str, fs: float, signals: "ChannelCacheWorkerSignals"):
+        super().__init__()
+        self.handle = handle
+        self.channel = channel
+        self.fs = float(fs)
+        self.signals = signals
+
+    def run(self) -> None:
+        try:
+            from biosqa.inference.streaming import build_plot_cache_blockwise
+            ft, fy, lo, hi = build_plot_cache_blockwise(self.handle, self.channel, self.fs)
+            self.signals.ready.emit(self.channel, ft, fy, float(lo), float(hi))
+        except Exception as exc:  # noqa: BLE001
+            self.signals.failed.emit(self.channel, str(exc))
+
+
+class StreamInferenceTask(QRunnable):
+    """Out-of-core OPEN + inference for very long recordings (Plan 2 §6/§9): builds the plot cache
+    block-by-block and runs sliding-window inference in a streaming pass — never holding the whole
+    signal. Emits ``plotReady`` (bind the trace) then ``intervalsReady`` (the segmentation). The
+    recoverability pass + false-clean guard are skipped in this mode (they need a whole-signal view);
+    a ``notice`` says so."""
+
+    def __init__(self, handle, infer_ch: str, plot_ch: str, plot_channels: list, modality: str,
+                 runner, overlap: float, signals: StreamWorkerSignals, rebuild_plot: bool = True):
+        super().__init__()
+        self.handle = handle
+        self.infer_ch = infer_ch
+        self.plot_ch = plot_ch
+        self.plot_channels = list(plot_channels)
+        self.modality = modality
+        self.runner = runner
+        self.overlap = float(overlap)
+        self.signals = signals
+        self.rebuild_plot = bool(rebuild_plot)   # False on a settings re-run (keep the current view)
+
+    def run(self) -> None:
+        try:
+            from biosqa.inference.streaming import build_plot_cache_blockwise, stream_infer
+
+            h = self.handle
+            if self.rebuild_plot:
+                plot_fs = float(h.fs_hz[self.plot_ch])
+                n_plot = int(h.n_samples[self.plot_ch])
+                full_t, full_y, lo, hi = build_plot_cache_blockwise(h, self.plot_ch, plot_fs)
+                self.signals.plotReady.emit({
+                    "modality": self.modality, "handle": h, "sig": None, "streaming": True,
+                    "plot_channels": self.plot_channels, "plot_fs": plot_fs,
+                    "full_t": full_t, "full_y": full_y, "trace_lo": lo, "trace_hi": hi,
+                    "n_samples_primary": n_plot,
+                    "infer_ch": self.infer_ch, "fs_in": float(h.fs_hz[self.infer_ch]),
+                    "fs_out": float(self.runner.card.fs_hz),
+                })
+            tiers, confs, arts, uncs, stride_sec, window_sec, _n = stream_infer(
+                h, self.infer_ch, self.runner, overlap=self.overlap)
+            intervals = run_length_encode(tiers, confs, stride_sec, window_sec,
+                                          artifacts_per_window=arts,
+                                          uncertainty_per_window=uncs)
+            self.signals.intervalsReady.emit(self.modality, intervals)
+            self.signals.notice.emit(
+                "Large recording — streaming analysis (recoverability + false-clean guard are "
+                "disabled in this mode).")
+        except Exception as exc:  # noqa: BLE001
+            self.signals.failed.emit(self.modality, str(exc))
+
+
+class AuditTask(QRunnable):
+    """On-demand LLM AUDIT of one selected window (off the decision path, Plan 1 §9).
+
+    Runs :func:`biosqa.inference.llm_audit.audit_segment` on the pool so the (seconds-scale,
+    local-ollama) call never blocks the GUI thread. Degrades gracefully: if ollama is
+    unreachable ``audit_segment`` returns ``{"error": ...}`` rather than raising.
+    """
+
+    def __init__(self, runner: OnnxRunner, window, model_grade: dict, guard: dict | None,
+                 signals: AuditWorkerSignals, model: str = "qwen3:32b", samples: int = 3,
+                 host: str = "http://localhost:11434", timeout: float = 60.0):
+        super().__init__()
+        self.runner = runner
+        self.window = window
+        self.model_grade = model_grade
+        self.guard = guard
+        self.signals = signals
+        self.model = model
+        self.samples = samples
+        self.host = host
+        self.timeout = float(timeout)
+
+    def run(self) -> None:
+        try:
+            fs = float(self.runner.card.fs_hz)
+            judgment = audit_segment(self.window, fs, self.runner.modality,
+                                     model_grade=self.model_grade, guard=self.guard,
+                                     model=self.model, samples=self.samples, host=self.host,
+                                     timeout=self.timeout)
+            self.signals.auditReady.emit(judgment)
+        except Exception as exc:  # noqa: BLE001
+            self.signals.failed.emit(str(exc))
+
+
+class SaliencyTask(QRunnable):
+    """On-demand EXPLAIN of the selected segment (XAI): both the spatial occlusion-SALIENCY heatmap (*where*
+    in time — :mod:`biosqa.inference.saliency`) and the group-Shapley feature ATTRIBUTION (*which* quality
+    property drives the grade — :mod:`biosqa.inference.feature_attribution`, fusion models only). Both are
+    gradient-free perturbation methods needing only forward passes (~0.1-1 s total), run off the GUI thread.
+    Downsamples the per-sample saliency to ``n_out`` points for QML; emits both in one payload."""
+
+    def __init__(self, runner: OnnxRunner, window, signals: "SaliencyWorkerSignals",
+                 target: str = "unusable", n_out: int = 256):
+        super().__init__()
+        self.runner = runner
+        self.window = window
+        self.signals = signals
+        self.target = target
+        self.n_out = int(n_out)
+
+    def run(self) -> None:
+        try:
+            from biosqa.inference.saliency import signal_saliency
+            sal = signal_saliency(self.window, self.runner, target=self.target)
+            n = sal.size
+            if n > self.n_out:                              # block-max downsample (keep peaks) for the UI
+                idx = np.linspace(0, n, self.n_out + 1).astype(int)
+                sal = np.array([sal[idx[i]:max(idx[i] + 1, idx[i + 1])].max() for i in range(self.n_out)])
+            attribution = None
+            try:                                            # feature attribution is advisory + fusion-only
+                from biosqa.inference.feature_attribution import grade_group_attribution
+                attribution = grade_group_attribution(self.window, self.runner)
+            except Exception:  # noqa: BLE001
+                attribution = None
+            self.signals.saliencyReady.emit(
+                {"map": [round(float(v), 4) for v in sal], "n": int(n), "attribution": attribution})
+        except Exception:  # noqa: BLE001 - advisory only
+            self.signals.saliencyReady.emit({"map": [], "n": 0, "attribution": None})
+
+
+class TranscodeTask(QRunnable):
+    """One-time foreign-format -> Zarr transcode + pyramid build (Plan 2 §6.1).
+
+    TODO(Plan2 §6.1): implement the actual transcode body (open via
+    ``io.loaders``, write via ``io.store.RecordingStore.create``, build
+    levels via ``io.pyramid.build_minmax_pyramid``); currently a stub that
+    reports immediate completion so the UI plumbing can be exercised end to
+    end before the heavy lifting lands.
+    """
+
+    def __init__(self, recording_path: str, signals: TranscodeWorkerSignals):
+        super().__init__()
+        self.recording_path = recording_path
+        self.signals = signals
+
+    def run(self) -> None:
+        raise NotImplementedError(
+            "TranscodeTask.run: transcode-to-Zarr + pyramid build not yet implemented "
+            "(TODO Plan2 §6.1, Phase 1)"
+        )
+
+
+__all__ = [
+    "LoadResampleTask",
+    "InferenceTask",
+    "StreamInferenceTask",
+    "ChannelCacheTask",
+    "AuditTask",
+    "TranscodeTask",
+]

@@ -1,0 +1,29 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { DOCS_NAV, withBase } from '../../lib/site';
+---
+<BaseLayout title="Documentation" description="BioSQA Studio documentation — install, concepts, and a reference for every workspace." wide navVariant="docs">
+  <div class="container docs-home">
+    <div class="microlabel">Documentation</div>
+    <h1>BioSQA Studio docs</h1>
+    <p class="text-2 home-lede">Install and run the app, learn the Q0–Q3 quality model, and find a reference for every workspace — from opening a recording to exporting corrected segments.</p>
+    <div class="home-grid">
+      {DOCS_NAV.map((sec) => (
+        <div class="card home-sec">
+          <div class="microlabel">{sec.label}</div>
+          <ul>
+            {sec.items.map((it) => <li><a href={withBase(`/docs/${it.slug}/`)}>{it.title}</a></li>)}
+          </ul>
+        </div>
+      ))}
+    </div>
+  </div>
+</BaseLayout>
+<style>
+  .docs-home { padding: var(--sp-8) 0; }
+  .home-lede { font-size: var(--step-1); max-width: 70ch; }
+  .home-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-4); margin-top: var(--sp-6); }
+  .home-sec ul { list-style: none; padding: 0; margin: var(--sp-3) 0 0; display: grid; gap: var(--sp-2); }
+  .home-sec a { color: var(--text-2); } .home-sec a:hover { color: var(--text); text-decoration: none; }
+  @media (max-width: 640px) { .home-grid { grid-template-columns: 1fr; } }
+</style>

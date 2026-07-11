@@ -1,0 +1,23 @@
+# Core ML reproducibility stack (Python 3.12).
+# torch is installed SEPARATELY — on RTX 5090 / Blackwell (sm_120) use the CUDA 12.8 index:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# CPU-only reproduction: pip install torch  (default index).
+torch>=2.7
+
+numpy
+scipy
+scikit-learn
+pandas
+pyarrow
+zarr>=3
+einops
+pyyaml
+mlflow                # experiment tracking (local-first; SQLite backend under ./mlruns)
+onnx
+onnxruntime           # CPU EP — export parity + the app's deployment target
+wfdb                  # PhysioNet WFDB (.dat/.hea) reader — only needed if you rebuild the data store
+
+# Research arms (install on demand; known dependency conflicts — isolate):
+#   tsai                # fastai backbones
+#   ruptures statsmodels  # change-point / SPC
+#   mamba-ssm           # CUDA Mamba kernel (Linux/CUDA only; Windows uses the pure-torch fallback)

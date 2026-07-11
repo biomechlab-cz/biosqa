@@ -1,0 +1,95 @@
+---
+import '../styles/global.css';
+import { SITE, withBase } from '../lib/site';
+import SiteNav from '../components/SiteNav.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+
+interface Props { title?: string; description?: string; wide?: boolean; navVariant?: 'landing' | 'docs' }
+const { title, description = SITE.description, wide = false, navVariant = 'landing' } = Astro.props;
+const fullTitle = title ? `${title} · ${SITE.name}` : `${SITE.name} — ${SITE.tagline}`;
+const canonical = new URL(Astro.url.pathname, Astro.site).href;
+const ogImage = withBase('/og.svg');
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href={withBase('/favicon.svg')} type="image/svg+xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#0A0D13" />
+    {/* set theme BEFORE first paint — no flash of the wrong theme. Dark is the default. */}
+    <script is:inline>
+      (() => {
+        try {
+          const t = localStorage.getItem('bsqa-theme');
+          document.documentElement.dataset.theme = t === 'light' ? 'light' : 'dark';
+          if (localStorage.getItem('bsqa-cbtiers') === '1') document.documentElement.dataset.cbtiers = '1';
+        } catch (e) { document.documentElement.dataset.theme = 'dark'; }
+      })();
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <SiteNav variant={navVariant} />
+    <main id="main" class={wide ? '' : 'main-narrow'}>
+      <slot />
+    </main>
+    <SiteFooter />
+    <script is:inline>
+      // theme + color-blind toggles (the only required client JS)
+      const root = document.documentElement;
+      document.addEventListener('click', (e) => {
+        const t = e.target.closest('[data-toggle-theme]');
+        if (t) {
+          const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+          root.dataset.theme = next;
+          try { localStorage.setItem('bsqa-theme', next); } catch (e) {}
+        }
+        const c = e.target.closest('[data-toggle-cbtiers]');
+        if (c) {
+          const on = root.dataset.cbtiers === '1';
+          if (on) { delete root.dataset.cbtiers; } else { root.dataset.cbtiers = '1'; }
+          try { localStorage.setItem('bsqa-cbtiers', on ? '0' : '1'); } catch (e) {}
+        }
+        const s = e.target.closest('[data-toggle-sidebar]');
+        if (s) { document.body.classList.toggle('sidebar-open'); }
+        const scrim = e.target.closest('[data-sidebar-scrim]');
+        if (scrim) { document.body.classList.remove('sidebar-open'); }
+        // copy buttons on code cards
+        const cp = e.target.closest('[data-copy]');
+        if (cp) {
+          const pre = cp.closest('.code-card')?.querySelector('pre');
+          if (pre && navigator.clipboard) {
+            navigator.clipboard.writeText(pre.innerText).then(() => {
+              const prev = cp.textContent; cp.textContent = '✓ copied';
+              setTimeout(() => { cp.textContent = prev; }, 1400);
+            }).catch(() => {});
+          }
+        }
+      });
+      // scroll-reveal (reduced-motion respected via CSS)
+      if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && 'IntersectionObserver' in window) {
+        const io = new IntersectionObserver((entries) => {
+          entries.forEach((en) => { if (en.isIntersecting) { en.target.classList.add('revealed'); io.unobserve(en.target); } });
+        }, { rootMargin: '0px 0px -8% 0px' });
+        document.querySelectorAll('[data-reveal]').forEach((el) => io.observe(el));
+      } else {
+        document.querySelectorAll('[data-reveal]').forEach((el) => el.classList.add('revealed'));
+      }
+    </script>
+  </body>
+</html>
+
+<style>
+  main { min-height: 60vh; }
+  .main-narrow { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--sp-5); }
+</style>

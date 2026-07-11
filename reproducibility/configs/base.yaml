@@ -1,0 +1,56 @@
+# Shared defaults for all experiments (Plan 1 §3, §4). Experiment files under
+# configs/experiment/ deep-merge onto this; CLI dotlist overrides win last.
+seed: 0
+device: cuda                # falls back to cpu automatically if no CUDA
+experiment_name: base
+
+tracking:
+  backend: mlflow           # local-first; ./mlruns
+  uri: null
+
+# ---- model: shared backbone + per-modality adapters/heads (§7) ----
+model:
+  backbone: patchtst        # cnn1d | patchtst | mamba(research)
+  d_model: 128
+  n_classes: 4              # Q0..Q3 ordinal
+  n_glitch: 0               # >0 enables glitch-type multitask head (§12.1)
+  head_hidden: null
+  dropout: 0.1
+  backbone_cfg:
+    depth: 3
+    n_heads: 8
+  modalities: null          # null = build all listed below; or a subset list -> specialist
+
+# ---- per-modality adapter geometry (patch_len/stride absorb sampling rate; §7.3)
+# token count ~= (L - patch_len)/stride + 1; aim for 32-64 tokens/window.
+modalities:
+  ecg: {patch_len: 32, stride: 16, c_in: 1, max_tokens: 64}
+  ppg: {patch_len: 16, stride: 8,  c_in: 1, max_tokens: 64}
+  eeg: {patch_len: 16, stride: 8,  c_in: 1, max_tokens: 64}
+  eda: {patch_len: 16, stride: 8,  c_in: 1, max_tokens: 64}
+
+# ---- training (§9.2) ----
+train:
+  epochs: 30
+  lr: 1.0e-3
+  weight_decay: 1.0e-2
+  warmup_frac: 0.05
+  loss: ce                  # ce | focal | corn
+  class_weights: null       # null | balanced | [w0,w1,w2,w3]
+  batch_size: 256
+  patience: 8
+  monitor: macro_f1
+  amp: true
+  num_workers: 0
+
+# ---- data ----
+data:
+  source: dummy             # dummy | store
+  modality: ecg
+  window_length: 1024
+  # store-mode fields (Phase 1): datasets, splits, etc. added by experiment cfgs
+
+# ---- export (§11) ----
+export:
+  enabled: false
+  quantize: true

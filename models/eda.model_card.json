@@ -1,0 +1,226 @@
+{
+  "modality": "eda",
+  "L_m": 480,
+  "fs_hz": 8.0,
+  "class_order": [
+    "Q0_unacceptable",
+    "Q1_poor",
+    "Q2_acceptable",
+    "Q3_excellent"
+  ],
+  "normalization": {
+    "method": "none"
+  },
+  "training_data_hash": "eda-combined-fusion-store_v3",
+  "model_version": "v3-combined-fusion-ordlogit",
+  "inputs": [
+    "x_raw",
+    "x_feat"
+  ],
+  "feature_preprocessing": {
+    "fn": "combined_vector",
+    "modality": "eda",
+    "feat_names": [
+      "eda_haar1_std",
+      "eda_haar1_max",
+      "eda_haar1_eratio",
+      "eda_haar2_std",
+      "eda_haar2_max",
+      "eda_haar2_eratio",
+      "eda_haar3_std",
+      "eda_haar3_max",
+      "eda_haar3_eratio",
+      "eda_haar4_std",
+      "eda_haar4_max",
+      "eda_haar4_eratio",
+      "eda_detail_approx_ratio",
+      "eda_dmax",
+      "eda_drms",
+      "sk_max",
+      "sk_mean",
+      "sk_flat",
+      "disp_ent",
+      "rqa_det",
+      "rqa_mean_diag",
+      "rqa_long_diag",
+      "jump_ratio",
+      "bv_rv_ratio",
+      "op_forbidden",
+      "op_self_trans",
+      "op_trans_ent",
+      "cpp",
+      "cqi"
+    ],
+    "n_features": 29,
+    "note": "sqa_features.combined_vector (per-modality SQI pack ++ advanced dynamics/HOS); pure numpy (numpy.rfft only); graph z-scores x_raw and standardizes x_feat (baked)."
+  },
+  "heads": [
+    {
+      "name": "grade",
+      "output_name": "q_logits",
+      "kind": "ordinal",
+      "activation": "softmax",
+      "class_order": [
+        "Q0_unacceptable",
+        "Q1_poor",
+        "Q2_acceptable",
+        "Q3_excellent"
+      ]
+    },
+    {
+      "name": "usable",
+      "output_name": "bin_logits",
+      "kind": "binary",
+      "activation": "softmax",
+      "class_order": [
+        "unusable",
+        "usable"
+      ]
+    }
+  ],
+  "calibration": {
+    "temperatures": {
+      "grade": 0.75,
+      "usable": 3.0
+    },
+    "grade_ece": [
+      0.1105,
+      0.0786
+    ],
+    "usable_ece": [
+      0.1307,
+      0.0284
+    ]
+  },
+  "routing": "grade+usable <- raw trunk fused with host combined SQI+dynamics vector; grade = ordinal ordered-logit",
+  "input_contract": {
+    "expects": "raw device-native signal (unfiltered)",
+    "reports": "quality of the signal AS PROVIDED \u2014 if the input was pre-filtered, this is the post-filter quality",
+    "caveat": "a pre-filtered but still-corrupted signal can be under-flagged (false-clean): an aggressive low-pass/band-limit strips the high-frequency cues the model keys on. The app runs biosqa.inference.prefilter.detect_prefiltering() to warn when the input looks pre-filtered."
+  },
+  "novelty": {
+    "method": "mahalanobis_sqi",
+    "feature_names": [
+      "Motion",
+      "Skewness"
+    ],
+    "mean": [
+      0.077409,
+      0.06764
+    ],
+    "std": [
+      0.138383,
+      1.740182
+    ],
+    "inv_corr": [
+      [
+        1.004282,
+        0.06558
+      ],
+      [
+        0.06558,
+        1.004282
+      ]
+    ],
+    "d2_threshold": 28.3858,
+    "reference": "data/store_v6 n=5801"
+  },
+  "feature_attribution": {
+    "feature_fn": "combined_vector",
+    "feature_names": [
+      "eda_haar1_std",
+      "eda_haar1_max",
+      "eda_haar1_eratio",
+      "eda_haar2_std",
+      "eda_haar2_max",
+      "eda_haar2_eratio",
+      "eda_haar3_std",
+      "eda_haar3_max",
+      "eda_haar3_eratio",
+      "eda_haar4_std",
+      "eda_haar4_max",
+      "eda_haar4_eratio",
+      "eda_detail_approx_ratio",
+      "eda_dmax",
+      "eda_drms",
+      "sk_max",
+      "sk_mean",
+      "sk_flat",
+      "disp_ent",
+      "rqa_det",
+      "rqa_mean_diag",
+      "rqa_long_diag",
+      "jump_ratio",
+      "bv_rv_ratio",
+      "op_forbidden",
+      "op_self_trans",
+      "op_trans_ent",
+      "cpp",
+      "cqi"
+    ],
+    "reference_mean": [
+      0.1857078435126071,
+      0.8291806854152431,
+      0.05037874520076609,
+      0.2457127093905583,
+      1.0747511068197588,
+      0.034198548751269604,
+      0.3666329710899542,
+      1.448359508484602,
+      0.02799114188638244,
+      0.6337069537291924,
+      2.116350499500831,
+      0.035549353316581496,
+      0.07971250064250489,
+      1.291520498804748,
+      0.2624952046802888,
+      6.575407985963858,
+      2.7527379056229258,
+      0.4420157659065263,
+      0.5405827068208522,
+      0.9380703596274058,
+      8.55166373348236,
+      1.0,
+      0.07616679641154284,
+      1.0990081117550532,
+      0.0075555556714534755,
+      0.5588791048377753,
+      0.6984126102651392,
+      0.3329080173013111,
+      3.1251761010487873
+    ],
+    "reference_std": [
+      0.2562896273902384,
+      1.5153873124309418,
+      0.11270529880669974,
+      0.27405905268747804,
+      1.3124322351740483,
+      0.06690835012380154,
+      0.2930487443434298,
+      1.3372916855599406,
+      0.04392091156360945,
+      0.3915331696939919,
+      1.5076532312780002,
+      0.04030083314293919,
+      0.22061974391288902,
+      2.24730321568607,
+      0.3586210982150506,
+      16.025539523292416,
+      8.076010269440562,
+      0.39378650341006605,
+      0.11846102544793992,
+      0.06289516044441289,
+      6.576904373233681,
+      0.0,
+      0.11875471368370055,
+      0.2812180437710232,
+      0.05180399901279273,
+      0.21058277491128755,
+      0.17079640698338586,
+      0.18065842528463807,
+      0.8633273058651484
+    ],
+    "reference_tier": "Q3",
+    "n_windows": 1500
+  }
+}

@@ -1,0 +1,250 @@
+{
+  "modality": "ppg",
+  "L_m": 640,
+  "fs_hz": 64.0,
+  "class_order": [
+    "Q0_unacceptable",
+    "Q1_poor",
+    "Q2_acceptable",
+    "Q3_excellent"
+  ],
+  "normalization": {
+    "method": "none"
+  },
+  "training_data_hash": "ppg-combined-fusion-store_ppg4_tmb",
+  "model_version": "v4-4cohort-dalia-ordlogit",
+  "inputs": [
+    "x_raw",
+    "x_feat"
+  ],
+  "feature_preprocessing": {
+    "fn": "combined_vector",
+    "modality": "ppg",
+    "feat_names": [
+      "ppg_skew",
+      "ppg_kurt",
+      "ppg_cardiac_ratio",
+      "ppg_hf_ratio",
+      "ppg_spec_entropy",
+      "ppg_pulse_regularity",
+      "sk_max",
+      "sk_mean",
+      "sk_flat",
+      "disp_ent",
+      "rqa_det",
+      "rqa_mean_diag",
+      "rqa_long_diag",
+      "jump_ratio",
+      "bv_rv_ratio",
+      "op_forbidden",
+      "op_self_trans",
+      "op_trans_ent",
+      "cpp",
+      "cqi"
+    ],
+    "n_features": 20,
+    "note": "sqa_features.combined_vector (per-modality SQI pack ++ advanced dynamics/HOS); pure numpy (numpy.rfft only); graph z-scores x_raw and standardizes x_feat (baked)."
+  },
+  "heads": [
+    {
+      "name": "grade",
+      "output_name": "q_logits",
+      "kind": "ordinal",
+      "activation": "softmax",
+      "class_order": [
+        "Q0_unacceptable",
+        "Q1_poor",
+        "Q2_acceptable",
+        "Q3_excellent"
+      ]
+    },
+    {
+      "name": "usable",
+      "output_name": "bin_logits",
+      "kind": "binary",
+      "activation": "softmax",
+      "class_order": [
+        "unusable",
+        "usable"
+      ]
+    }
+  ],
+  "calibration": {
+    "temperatures": {
+      "grade": 0.7,
+      "usable": 5.556
+    },
+    "grade_ece": [
+      0.0859,
+      0.052
+    ],
+    "usable_ece": [
+      0.1509,
+      0.0283
+    ]
+  },
+  "routing": "grade+usable <- raw trunk fused with host combined SQI+dynamics vector; grade = ordinal ordered-logit",
+  "data": {
+    "cohorts": [
+      "but_ppg",
+      "wesad_ppg",
+      "ppg_dalia"
+    ],
+    "note": "added PPG-DaLiA (4th cohort) -> held-out WESAD cross-cohort LODO QWK ~0.40->~0.60; transferable-fold (WESAD/DaLiA) usable-AUROC ~0.80-0.85 (competitive with published pairwise DaLiA->WESAD band); grade ECE 0.052. Tumbling windows (50% overlap tested and found accuracy-neutral -> not used). DaLiA/WESAD share an ACC-motion label rule (caveat)."
+  },
+  "input_contract": {
+    "expects": "raw device-native signal (unfiltered)",
+    "reports": "quality of the signal AS PROVIDED \u2014 if the input was pre-filtered, this is the post-filter quality",
+    "caveat": "a pre-filtered but still-corrupted signal can be under-flagged (false-clean): an aggressive low-pass/band-limit strips the high-frequency cues the model keys on. The app runs biosqa.inference.prefilter.detect_prefiltering() to warn when the input looks pre-filtered."
+  },
+  "novelty": {
+    "method": "mahalanobis_sqi",
+    "feature_names": [
+      "bSQI",
+      "tSQI",
+      "Rhythm reg.",
+      "Kurtosis",
+      "HF noise",
+      "Skewness"
+    ],
+    "mean": [
+      0.363068,
+      0.517783,
+      0.607632,
+      3.936883,
+      0.005336,
+      0.069195
+    ],
+    "std": [
+      0.149373,
+      0.43163,
+      0.2876,
+      5.301124,
+      0.027822,
+      0.996502
+    ],
+    "inv_corr": [
+      [
+        1.063316,
+        -0.238923,
+        0.020556,
+        0.01645,
+        -0.088063,
+        -0.045818
+      ],
+      [
+        -0.238923,
+        1.212144,
+        -0.279563,
+        0.196252,
+        0.031928,
+        -0.140831
+      ],
+      [
+        0.020556,
+        -0.279563,
+        1.233113,
+        0.324887,
+        0.116989,
+        -0.167351
+      ],
+      [
+        0.01645,
+        0.196252,
+        0.324887,
+        1.189801,
+        -0.142943,
+        -0.143039
+      ],
+      [
+        -0.088063,
+        0.031928,
+        0.116989,
+        -0.142943,
+        1.061994,
+        -0.109274
+      ],
+      [
+        -0.045818,
+        -0.140831,
+        -0.167351,
+        -0.143039,
+        -0.109274,
+        1.069151
+      ]
+    ],
+    "d2_threshold": 63.7819,
+    "reference": "data/store_v6 n=6000"
+  },
+  "feature_attribution": {
+    "feature_fn": "combined_vector",
+    "feature_names": [
+      "ppg_skew",
+      "ppg_kurt",
+      "ppg_cardiac_ratio",
+      "ppg_hf_ratio",
+      "ppg_spec_entropy",
+      "ppg_pulse_regularity",
+      "sk_max",
+      "sk_mean",
+      "sk_flat",
+      "disp_ent",
+      "rqa_det",
+      "rqa_mean_diag",
+      "rqa_long_diag",
+      "jump_ratio",
+      "bv_rv_ratio",
+      "op_forbidden",
+      "op_self_trans",
+      "op_trans_ent",
+      "cpp",
+      "cqi"
+    ],
+    "reference_mean": [
+      0.22571751304767773,
+      -0.4185476279676271,
+      0.6618443429752563,
+      0.000828824037494087,
+      0.4300034486254056,
+      0.7416379268740614,
+      2.00157033072835,
+      -0.27050528955599296,
+      0.028140219470762815,
+      0.6179909186065197,
+      0.8902595312992732,
+      4.994780285994212,
+      1.0,
+      0.001235549135133624,
+      1.4797452682654062,
+      0.0,
+      0.8429251689513524,
+      0.5289335955778758,
+      0.20461303791900476,
+      5.572736496766408
+    ],
+    "reference_std": [
+      0.6579112801098296,
+      1.5809415032790637,
+      0.2553453266764879,
+      0.009935824613549226,
+      0.10887027338020903,
+      0.20616891617580407,
+      4.6435805588800365,
+      1.522596936700901,
+      0.11352046072015286,
+      0.05248409073648213,
+      0.048435775822167605,
+      1.47315700093678,
+      0.0,
+      0.015478219065706893,
+      0.1026604460151396,
+      0.0,
+      0.08649875043392617,
+      0.08596690216117704,
+      0.08017947246177211,
+      1.7347724939373457
+    ],
+    "reference_tier": "Q3",
+    "n_windows": 1500
+  }
+}

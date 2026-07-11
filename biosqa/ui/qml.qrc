@@ -1,0 +1,53 @@
+<!--
+  Qt resource collection for the QML presentation tree (Plan 2 §13 packaging
+  note: "verify PySide6's QML import path resolves app/qml at the frozen
+  app's runtime location").
+
+  Dev-time loading (biosqa.main.build_engine) reads these files
+  straight off disk via QUrl.fromLocalFile -- fast iteration, no compile
+  step. For a frozen build, compile this file with pyside6-rcc:
+
+      pyside6-rcc qml.qrc -o qml_rc.py
+
+  then `import qml_rc` before `engine.load(QUrl("qrc:/qml/Main.qml"))` in a
+  packaging-specific entry point (see ui/resources.py for the alternative,
+  non-.qrc registration approach).
+-->
+<RCC>
+    <qresource prefix="/qml">
+        <file alias="Theme.qml">Theme.qml</file>
+        <file alias="Main.qml">Main.qml</file>
+        <file alias="TopBar.qml">TopBar.qml</file>
+        <file alias="ActivityRail.qml">ActivityRail.qml</file>
+        <file alias="FileTree.qml">FileTree.qml</file>
+        <file alias="Controls.qml">Controls.qml</file>
+        <file alias="SignalView.qml">SignalView.qml</file>
+        <file alias="Minimap.qml">Minimap.qml</file>
+
+        <file alias="workspace/WorkspaceView.qml">workspace/WorkspaceView.qml</file>
+        <file alias="workspace/ChannelListPanel.qml">workspace/ChannelListPanel.qml</file>
+        <file alias="workspace/QualityLegend.qml">workspace/QualityLegend.qml</file>
+        <file alias="workspace/QualityBandDelegate.qml">workspace/QualityBandDelegate.qml</file>
+        <file alias="workspace/HoverTooltip.qml">workspace/HoverTooltip.qml</file>
+        <file alias="workspace/TimeAxis.qml">workspace/TimeAxis.qml</file>
+        <file alias="workspace/QualityInspectorPanel.qml">workspace/QualityInspectorPanel.qml</file>
+        <file alias="workspace/ConfidenceGauge.qml">workspace/ConfidenceGauge.qml</file>
+        <file alias="workspace/ArtifactChips.qml">workspace/ArtifactChips.qml</file>
+        <file alias="workspace/RationaleBox.qml">workspace/RationaleBox.qml</file>
+        <file alias="workspace/HumanInLoopControls.qml">workspace/HumanInLoopControls.qml</file>
+
+        <file alias="overview/OverviewView.qml">overview/OverviewView.qml</file>
+        <file alias="overview/KpiCard.qml">overview/KpiCard.qml</file>
+        <file alias="overview/DonutChart.qml">overview/DonutChart.qml</file>
+        <file alias="overview/ModalityRibbon.qml">overview/ModalityRibbon.qml</file>
+        <file alias="overview/ArtifactBars.qml">overview/ArtifactBars.qml</file>
+        <file alias="overview/ModelCardPanel.qml">overview/ModelCardPanel.qml</file>
+
+        <file alias="inspector/SegmentInspectorView.qml">inspector/SegmentInspectorView.qml</file>
+
+        <file alias="segmentation/QualitySegmentationView.qml">segmentation/QualitySegmentationView.qml</file>
+        <file alias="segmentation/FilterToolbar.qml">segmentation/FilterToolbar.qml</file>
+        <file alias="segmentation/RunLengthTrack.qml">segmentation/RunLengthTrack.qml</file>
+        <file alias="segmentation/SegmentTable.qml">segmentation/SegmentTable.qml</file>
+    </qresource>
+</RCC>

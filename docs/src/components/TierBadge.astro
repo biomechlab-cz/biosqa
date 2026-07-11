@@ -1,0 +1,37 @@
+---
+// Q0–Q3 tier badge: color + glyph + mono code together (never color alone). `filled` inverts to a solid
+// tier fill with dark glyph (verdict style). Q0 carries a diagonal hatch tint for color-blind redundancy.
+interface Props { tier: 'Q0' | 'Q1' | 'Q2' | 'Q3'; label?: boolean; filled?: boolean; size?: number }
+const { tier, label = false, filled = false, size = 30 } = Astro.props;
+const META = {
+  Q3: { glyph: '✓', word: 'Excellent', v: 'var(--q3)', dark: '#062521' },
+  Q2: { glyph: '✓', word: 'Acceptable', v: 'var(--q2)', dark: '#0A0D13' },
+  Q1: { glyph: '⚠', word: 'Poor', v: 'var(--q1)', dark: '#0A0D13' },
+  Q0: { glyph: '⊘', word: 'Unacceptable', v: 'var(--q0)', dark: '#0A0D13' },
+} as const;
+const m = META[tier];
+---
+<span class:list={['tier', filled && 'tier-filled', tier === 'Q0' && 'tier-hatch']}
+      style={`--tv:${m.v}; --tbz:${size}px; --tdark:${m.dark}`}>
+  <span class="tier-box" aria-hidden="true">{m.glyph}</span>
+  <span class="tier-code mono">{tier}</span>
+  {label && <span class="tier-word">{m.word}</span>}
+</span>
+
+<style>
+  .tier { display: inline-flex; align-items: center; gap: 9px; font-size: 0.92rem; }
+  .tier-box {
+    width: var(--tbz); height: var(--tbz); border-radius: 9px; display: grid; place-items: center;
+    background: color-mix(in srgb, var(--tv) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--tv) 55%, transparent); color: var(--tv);
+    font-weight: 700; font-size: calc(var(--tbz) * 0.55); flex: none;
+  }
+  .tier-filled .tier-box { background: var(--tv); color: var(--tdark); border-color: var(--tv); }
+  .tier-hatch .tier-box {
+    background-image: repeating-linear-gradient(45deg,
+      color-mix(in srgb, var(--tv) 24%, transparent) 0 4px,
+      color-mix(in srgb, var(--tv) 10%, transparent) 4px 8px);
+  }
+  .tier-code { color: var(--tv); font-weight: 600; font-size: 13px; }
+  .tier-word { color: var(--text-2); font-size: 14px; }
+</style>

@@ -1,0 +1,21 @@
+# Phase-0 end-to-end smoke test on synthetic data (no real datasets needed).
+# Proves config -> model -> train -> frozen-eval -> ONNX export + parity works.
+experiment_name: dummy_smoke
+seed: 0
+model:
+  backbone: cnn1d           # fast + exportable for the smoke run
+  d_model: 64
+  backbone_cfg:
+    n_blocks: 3
+  modalities: [ecg]         # single-modality specialist
+train:
+  epochs: 6
+  batch_size: 128
+  patience: 4
+data:
+  source: dummy
+  modality: ecg
+  window_length: 1024
+export:
+  enabled: true
+  quantize: true
