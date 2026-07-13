@@ -182,6 +182,9 @@ Rectangle {
     Shortcut {
         sequences: [StandardKey.Open]        // Ctrl+O opens a recording (auto-detect modality)
         context: Qt.ApplicationShortcut
+        // an application-context shortcut fires straight THROUGH a modal popup, so it would open a
+        // file dialog on top of the settings dialog
+        enabled: !AppController.settingsOpen
         onActivated: root._openWith("")
     }
 }

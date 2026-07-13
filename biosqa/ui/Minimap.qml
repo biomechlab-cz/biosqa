@@ -50,10 +50,12 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            // coarse waveform baseline placeholder
+            // coarse waveform baseline; drawn only once a recording is actually open, so an
+            // empty app doesn't render a "trace" for a signal that isn't there
             Shape {
                 anchors.fill: parent
                 anchors.bottomMargin: 10
+                visible: signalView.durationSec > 0
                 ShapePath {
                     strokeWidth: 1
                     strokeColor: Qt.rgba(0.42, 0.46, 0.53, 0.8)

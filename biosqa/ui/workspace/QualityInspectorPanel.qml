@@ -106,7 +106,7 @@ Rectangle {
                     visible: guard.hasWarning
                     Layout.fillWidth: true
                     color: Qt.rgba(0.878, 0.639, 0.18, 0.12)   // amber tint
-                    border.color: "#E0A32E"
+                    border.color: Theme.warnColor
                     border.width: 1
                     radius: 9
                     implicitHeight: bannerCol.implicitHeight + 20
@@ -118,7 +118,7 @@ Rectangle {
                         spacing: 4
                         RowLayout {
                             spacing: 6
-                            Text { text: "⚠"; color: "#E0A32E"; font.pixelSize: 13 }
+                            Text { text: "⚠"; color: Theme.warnColor; font.pixelSize: 13 }
                             Text {
                                 text: "Input warning"
                                 color: Theme.textPrimary
@@ -173,7 +173,7 @@ Rectangle {
                         Text {
                             text: "Completeness " + (guard.completeness * 100).toFixed(0) + "%"
                                   + (guard.dataQualityUsable ? "" : " · not usable")
-                            color: guard.dataQualityUsable ? Theme.textSecondary : "#E5484D"
+                            color: guard.dataQualityUsable ? Theme.textSecondary : Theme.dangerColor
                             font.family: Theme.fontMono; font.pixelSize: 11
                         }
                         Repeater {
@@ -194,7 +194,7 @@ Rectangle {
                     visible: guard.domainShiftIndex > 0.3 || (guard.regimeFlags && guard.regimeFlags.length > 0)
                     Layout.fillWidth: true
                     color: Qt.rgba(0.878, 0.639, 0.18, 0.10)
-                    border.color: "#E0A32E"; border.width: 1
+                    border.color: Theme.warnColor; border.width: 1
                     radius: 9
                     implicitHeight: regCol.implicitHeight + 20
                     ColumnLayout {
@@ -204,7 +204,7 @@ Rectangle {
                         spacing: 3
                         RowLayout {
                             spacing: 6
-                            Text { text: "⚠"; color: "#E0A32E"; font.pixelSize: 13 }
+                            Text { text: "⚠"; color: Theme.warnColor; font.pixelSize: 13 }
                             Text {
                                 text: "Out-of-regime input"
                                 color: Theme.textPrimary
@@ -220,7 +220,7 @@ Rectangle {
                             }
                             Text {
                                 text: "shift " + Math.round(guard.domainShiftIndex * 100) + "%"
-                                color: "#E0A32E"; font.family: Theme.fontMono; font.pixelSize: 10
+                                color: Theme.warnColor; font.family: Theme.fontMono; font.pixelSize: 10
                             }
                         }
                         Repeater {
@@ -411,10 +411,7 @@ Rectangle {
                                     font.bold: true
                                 }
                                 Text {
-                                    text: root.segment
-                                        ? (Theme.currentQualityPalette()[root.segment.tier]
-                                           || Theme.currentQualityPalette()["Q3"]).label
-                                        : ""
+                                    text: root.segment ? Theme.tierInfo(root.segment.tier).label : ""
                                     color: Theme.textPrimary
                                     font.family: Theme.fontUi
                                     font.pixelSize: 13
@@ -562,7 +559,7 @@ Rectangle {
                                 // predictive uncertainty (softmax entropy) — amber when the grade is shaky
                                 visible: root.segment && root.segment.uncertainty > 0.02
                                 text: "uncertainty " + (root.segment ? Math.round(root.segment.uncertainty * 100) : 0) + "%"
-                                color: (root.segment && root.segment.uncertainty > 0.5) ? "#E0A32E" : Theme.textMuted
+                                color: (root.segment && root.segment.uncertainty > 0.5) ? Theme.warnColor : Theme.textMuted
                                 font.family: Theme.fontMono
                                 font.pixelSize: 10
                             }
@@ -581,7 +578,7 @@ Rectangle {
                     readonly property bool amb: root.segment ? root.segment.ambiguous : false
                     color: confSetCard.amb ? Qt.rgba(0.878, 0.639, 0.18, 0.10)
                                            : Qt.rgba(0.18, 0.82, 0.71, 0.08)
-                    border.color: confSetCard.amb ? "#E0A32E" : Theme.tealText
+                    border.color: confSetCard.amb ? Theme.warnColor : Theme.tealText
                     border.width: 1
                     radius: 9
                     implicitHeight: confSetCol.implicitHeight + 20
@@ -594,12 +591,12 @@ Rectangle {
                             spacing: 7
                             Text {
                                 text: confSetCard.amb ? "⚠" : "✓"
-                                color: confSetCard.amb ? "#E0A32E" : Theme.tealText
+                                color: confSetCard.amb ? Theme.warnColor : Theme.tealText
                                 font.pixelSize: 13; font.bold: true
                             }
                             Text {
                                 text: confSetCard.amb ? "Ambiguous grade" : "Confident grade"
-                                color: confSetCard.amb ? "#E0A32E" : Theme.tealText
+                                color: confSetCard.amb ? Theme.warnColor : Theme.tealText
                                 font.family: Theme.fontUi; font.pixelSize: 12; font.weight: Font.DemiBold
                             }
                             Item { Layout.fillWidth: true }
@@ -668,14 +665,14 @@ Rectangle {
                         Layout.fillWidth: true
                         color: Theme.bgPanelAlt
                         radius: Theme.radiusControl
-                        border.color: guard.auditError ? "#E0A32E" : Theme.borderColor
+                        border.color: guard.auditError ? Theme.warnColor : Theme.borderColor
                         border.width: 1
                         implicitHeight: auditText.implicitHeight + 22
 
                         Rectangle {  // left accent bar
                             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
                             width: 2; radius: 1
-                            color: guard.auditError ? "#E0A32E" : Theme.accent
+                            color: guard.auditError ? Theme.warnColor : Theme.accent
                         }
                         Text {
                             id: auditText
@@ -683,7 +680,7 @@ Rectangle {
                             anchors.leftMargin: 13; anchors.rightMargin: 13
                             anchors.topMargin: 11; anchors.bottomMargin: 11
                             text: guard.auditText
-                            color: guard.auditError ? "#E0A32E" : "#c5cdda"
+                            color: guard.auditError ? Theme.warnColor : Theme.textBody
                             font.family: Theme.fontUi; font.pixelSize: 12
                             lineHeight: 1.45; wrapMode: Text.WordWrap
                         }

@@ -15,8 +15,19 @@ from PySide6.QtCore import QRunnable
 from biosqa.inference.data_quality import record_quality
 from biosqa.inference.llm_audit import audit_segment
 from biosqa.inference.onnx_runner import OnnxRunner
-from biosqa.inference.segmenter import run_length_encode, threshold_artifact_labels
+from biosqa.inference.postprocess import (
+    calibrate_grade_probs,
+    calibrate_prediction,
+    confidences_from,
+    normalized_entropy,
+)
+from biosqa.inference.segmenter import (
+    run_length_encode,
+    threshold_artifact_labels,
+    window_intervals,
+)
 from biosqa.io.loaders import read_window
+from biosqa.io.pyramid import minmax_envelope_indices, samples_per_bucket
 from biosqa.workers.signals import (
     AuditWorkerSignals,
     SaliencyWorkerSignals,
@@ -30,6 +41,22 @@ from biosqa.workers.signals import (
 _PLOT_CACHE_CAP = 400000
 
 
+def resample_ratio(fs_in: float, fs_out: float) -> tuple[int, int]:
+    """The ``(up, down)`` polyphase ratio :func:`resample_signal` resamples with, ``(1, 1)`` when it
+    short-circuits (rates equal / degenerate).
+
+    Exposed because a CHUNKED resample has to know it: ``resample_poly``'s polyphase phase at a block
+    start depends on that block's start index MOD ``down``, so a streaming reader must cut its blocks on
+    multiples of ``down`` or each block lands on a different phase of the filter than the whole-signal
+    resample would (see :func:`inference.streaming.stream_infer`)."""
+    if fs_in <= 0 or abs(fs_in - fs_out) < 1e-3:
+        return 1, 1
+    from fractions import Fraction
+
+    frac = Fraction(float(fs_out) / float(fs_in)).limit_denominator(1000)
+    return frac.numerator, frac.denominator
+
+
 def resample_signal(sig, fs_in: float, fs_out: float):
     """Resample a 1-D signal ``fs_in -> fs_out`` (anti-aliased where possible). Off-thread helper
     shared by :class:`LoadResampleTask` and the Coordinator so the full-signal resample never runs
@@ -38,12 +65,10 @@ def resample_signal(sig, fs_in: float, fs_out: float):
     if fs_in <= 0 or abs(fs_in - fs_out) < 1e-3 or sig.size < 2:
         return sig
     try:  # scipy ships with mne (an app dep); poly resample is anti-aliased
-        from fractions import Fraction
-
         from scipy.signal import resample_poly
 
-        frac = Fraction(float(fs_out) / float(fs_in)).limit_denominator(1000)
-        return resample_poly(sig, frac.numerator, frac.denominator).astype(np.float32)
+        up, down = resample_ratio(fs_in, fs_out)
+        return resample_poly(sig, up, down).astype(np.float32)
     except Exception:  # pragma: no cover - linear fallback if scipy is unavailable
         n_out = max(2, int(round(sig.size * fs_out / fs_in)))
         return np.interp(
@@ -52,15 +77,20 @@ def resample_signal(sig, fs_in: float, fs_out: float):
 
 
 def build_plot_cache(raw, fs: float, cap: int = _PLOT_CACHE_CAP):
-    """Full-resolution primary-channel plot cache ``(full_t, full_y, lo, hi)`` — the work
-    SignalViewController.loadTrace used to do inline on the GUI thread."""
+    """Primary-channel plot cache ``(full_t, full_y, lo, hi)`` — the work SignalViewController.loadTrace
+    used to do inline on the GUI thread.
+
+    Over the cap the cache is a MIN/MAX BUCKET ENVELOPE (:func:`io.pyramid.minmax_envelope_indices`),
+    not ``raw[::stride]``: same point budget, but every extremum survives. No display path ever
+    re-reads raw at a higher resolution on zoom, so a spike a stride skipped was gone for good."""
     raw = np.asarray(raw, dtype=np.float64)
     fs = float(fs) or 1.0
     t = np.arange(raw.shape[0], dtype=np.float64) / fs
-    if raw.shape[0] > cap:
-        stride = int(np.ceil(raw.shape[0] / cap))
-        full_t = np.ascontiguousarray(t[::stride])
-        full_y = np.ascontiguousarray(raw[::stride])
+    spb = samples_per_bucket(raw.shape[0], int(cap))
+    if spb > 1:
+        idx = minmax_envelope_indices(raw, spb)
+        full_t = np.ascontiguousarray(t[idx])
+        full_y = np.ascontiguousarray(raw[idx])
     else:
         full_t = np.ascontiguousarray(t)
         full_y = np.ascontiguousarray(raw)
@@ -118,7 +148,12 @@ class LoadResampleTask(QRunnable):
 
 
 class InferenceTask(QRunnable):
-    """Runs sliding-window ONNX inference + RLE segmentation for one modality (Plan 2 §7.2/§7.3)."""
+    """Runs sliding-window ONNX inference + RLE segmentation for one modality (Plan 2 §7.2/§7.3).
+
+    ``cancel`` is a cooperative cancellation token (a ``threading.Event``): the Coordinator sets the
+    PREVIOUS task's token when a new run supersedes it. A cancelled task returns at its next PHASE
+    boundary and emits NOTHING AT ALL — not even ``failed``, which would clobber the live run's status.
+    """
 
     def __init__(
         self,
@@ -132,6 +167,7 @@ class InferenceTask(QRunnable):
         bsqi_threshold: float = 0.72,
         recovery_enabled: bool = True,
         refine_enabled: bool = True,
+        cancel=None,
     ):
         super().__init__()
         self.runner = runner
@@ -144,6 +180,12 @@ class InferenceTask(QRunnable):
         self.bsqi_threshold = float(bsqi_threshold)
         self.recovery_enabled = bool(recovery_enabled)
         self.refine_enabled = bool(refine_enabled)
+        self.cancel = cancel
+
+    def cancelled(self) -> bool:
+        """True once the token is set — checked at every phase boundary (the phases are seconds-scale
+        on a long record, and ``_recoverability`` is a whole SECOND ONNX pass)."""
+        return self.cancel is not None and self.cancel.is_set()
 
     def run(self) -> None:
         try:
@@ -154,44 +196,31 @@ class InferenceTask(QRunnable):
             # optional multilabel artifact head decorates each window with its
             # glitch-type tags (empty for legacy single-head models).
             pred = self.runner.run_sliding_window_multihead(self.signal, overlap=self.overlap)
-            q_probs = pred.primary
+            if self.cancelled():
+                return
             grade_order = card.primary_head.class_order
             worst_tier = grade_order[0].split("_")[0] if grade_order else "Q0"
-            # Fail-safe on a NON-FINITE model output: a NaN/inf input window passes through
-            # normalize_window's card-constant mean/std to a NaN softmax. argmax would still pick Q0, but
-            # the confidence AND uncertainty would be NaN and get RLE-encoded + EXPORTED. Replace such rows
-            # with a uniform distribution (→ worst tier Q0, maximal entropy) so every downstream derivation
-            # (confidence, uncertainty, conformal) stays finite, then force zero confidence — a garbage
-            # window degrades to a low-confidence 'unusable', never a NaN.
-            non_finite = np.zeros(0, dtype=bool)
-            if len(q_probs):
-                q_probs = np.asarray(q_probs, dtype=np.float64).copy()
-                non_finite = ~np.isfinite(q_probs).all(axis=1)
-                if non_finite.any():
-                    q_probs[non_finite] = 1.0 / q_probs.shape[1]
-                # Calibrate ONCE via the card's grade temperature so ALL user-facing UQ surfaces
-                # (confidence, entropy-uncertainty, conformal set) come from the SAME calibrated
-                # distribution the conformal threshold was fit on — rather than confidence/uncertainty on
-                # the raw (mis-calibrated) softmax while only conformal was scaled. Monotonic → tiers
-                # (argmax) unchanged; a garbage window's uniform row stays uniform.
-                _T = float(getattr(card, "grade_temperature", 1.0) or 1.0)
-                if _T != 1.0:
-                    from biosqa.inference.conformal import temperature_scale
-                    q_probs = temperature_scale(q_probs, _T)
+            # Sanitation (non-finite -> uniform) + grade temperature scaling, from the SHARED
+            # postprocess helper the streaming path also calls — the two paths must not derive
+            # different confidences from the same signal.
+            q_probs, non_finite = calibrate_grade_probs(pred.primary, card)
             # Emit the SHORT tier code ("Q0".."Q3") the filters / legend / band delegate expect —
             # class_order carries full labels ("Q0_unacceptable"), so split on "_" (a no-op if the card
             # already uses short codes).
             tiers = [grade_order[i].split("_")[0] for i in q_probs.argmax(axis=1)] if len(q_probs) else []
-            confidences = q_probs.max(axis=1) if len(q_probs) else q_probs
-            if len(confidences) and non_finite.any():
-                confidences = np.asarray(confidences, dtype=np.float64).copy()
-                confidences[non_finite] = 0.0
+            confidences = confidences_from(q_probs, non_finite)
 
             # False-clean GUARD + record DATA-QUALITY (both best-effort; a failure here
             # must never break the primary segmentation). The integrity override re-flags
             # confidently-clean windows that the filter-robust bSQI marks corrupt on
             # pre-filtered input -> force them to the worst tier so the track shows them.
-            guard = self._guard_report(tiers, worst_tier, pred) if self.guard_enabled else None
+            # The guard reads P(unusable) off the usable head, so it gets the CALIBRATED prediction.
+            if self.cancelled():
+                return
+            guard = (self._guard_report(tiers, worst_tier, calibrate_prediction(pred, card))
+                     if self.guard_enabled else None)
+            if self.cancelled():
+                return                      # _data_quality_report EMITS — a cancelled run must not
             self._data_quality_report()
 
             artifacts_per_window = None
@@ -205,15 +234,20 @@ class InferenceTask(QRunnable):
 
             # Advisory recoverability: a SECOND pass on a filtered copy → which poor windows a
             # standard filter would lift to usable (never re-grades; the raw tier stays authoritative).
+            # The single biggest chunk of a superseded run's wasted CPU, hence a token check first.
+            if self.cancelled():
+                return
             rec_pw, rtier_pw = (
                 self._recoverability(tiers, grade_order)
                 if self.recovery_enabled and len(tiers) else (None, None)
             )
             # Predictive uncertainty (research3 Rec.6): normalized entropy of the softmax the model
             # already returned — FREE (the workflow experiment found 8x TTA adds ~nothing over this).
-            uncertainty_pw = self._softmax_uncertainty(q_probs)
+            uncertainty_pw = normalized_entropy(q_probs)
             # Task-relative rate-usability: poor-morphology windows whose HR is still recoverable
             # (distinct from recoverability — catches wander/powerline the filtered pass misses).
+            if self.cancelled():
+                return
             rate_pw, hr_pw = self._rate_usability(tiers)
             # Conformal APS prediction set (research3 UQ): decode a coverage-guaranteed set per segment from
             # the already-calibrated grade distribution (q_probs was temperature-scaled above). Only when the
@@ -222,8 +256,11 @@ class InferenceTask(QRunnable):
             conf_thr = getattr(card, "conformal_threshold", None)
             grade_probs_cal = q_probs if (conf_thr is not None and len(q_probs)) else None
 
-            intervals = run_length_encode(
-                tiers, confidences, self.window_stride_sec, self.window_length_sec,
+            # The TRUE start time of every window the model scored. The grid is not uniform (the final
+            # window is end-anchored so the tail is graded), so segmentation must bound its intervals on
+            # these -- assuming `i * stride` shifts the tail window's grade past the end of the record.
+            starts_sec = self._window_starts_sec(len(tiers))
+            per_window = dict(
                 artifacts_per_window=artifacts_per_window,
                 recoverable_per_window=rec_pw, recovered_tier_per_window=rtier_pw,
                 uncertainty_per_window=uncertainty_pw,
@@ -232,31 +269,50 @@ class InferenceTask(QRunnable):
                 class_order=[g.split("_")[0] for g in grade_order],
                 conformal_threshold=conf_thr,
             )
+            intervals = run_length_encode(
+                tiers, confidences, self.window_stride_sec, self.window_length_sec,
+                window_starts_sec=starts_sec, **per_window,
+            )
             # Boundary refinement: localize a poor segment to its actual artefact using a fine
             # per-bin badness score (the model's coarse window smears a short burst; overlap can't
             # fix that — it makes it wider). Advisory; never breaks the primary segmentation.
-            if self.refine_enabled:
+            # It needs the model's PER-WINDOW grades, not the RLE output: RLE has already resolved each
+            # multiply-covered time to ONE displayed grade, and the ceiling on an honest relaxation is
+            # the BEST grade the model gave any window covering that time (see inference.refine).
+            if self.cancelled():
+                return
+            if self.refine_enabled and starts_sec is not None:
                 try:
                     from biosqa.inference.refine import refine_intervals
+                    model_windows = window_intervals(
+                        tiers, confidences, starts_sec, self.window_length_sec, **per_window,
+                    )
                     intervals = refine_intervals(intervals, self.signal, float(card.fs_hz),
-                                                 self.runner.modality)
+                                                 self.runner.modality, model_windows=model_windows)
                 except Exception:  # noqa: BLE001
                     pass
+            if self.cancelled():
+                return
             self.signals.intervalsReady.emit(self.runner.modality, intervals)
             if guard is not None:
                 self.signals.guardReady.emit(self.runner.modality, guard)
         except Exception as exc:  # noqa: BLE001
+            if self.cancelled():
+                return              # a cancelled run is silent even when it dies on the way out
             self.signals.failed.emit(self.runner.modality, str(exc))
 
-    @staticmethod
-    def _softmax_uncertainty(q_probs):
-        """Per-window normalized predictive entropy of the grade softmax (0=certain, 1=uniform).
-        Free — computed from probabilities already returned; no extra inference."""
-        if q_probs is None or not len(q_probs):
+    def _window_starts_sec(self, n_windows: int):
+        """The scored windows' real start times, or ``None`` when they cannot be established.
+
+        ``None`` falls the segmenter back to the uniform ``i * stride`` grid — the pre-existing
+        behaviour, correct whenever the record tiles evenly. A count mismatch means the starts do not
+        describe THESE grades, and a wrong start time is a wrong segment time, so we decline to guess.
+        """
+        try:
+            starts = self.runner.window_starts_sec(self.signal, overlap=self.overlap)
+        except Exception:  # noqa: BLE001 - e.g. a runner stand-in without the card/method
             return None
-        p = np.clip(np.asarray(q_probs, dtype=np.float64), 1e-12, 1.0)
-        k = p.shape[1]
-        return (-(p * np.log(p)).sum(axis=1) / np.log(k)) if k > 1 else np.zeros(len(p))
+        return starts if starts is not None and len(starts) == n_windows else None
 
     def _rate_usability(self, tiers: list):
         """Per-window rate-usability for ECG/PPG: for POOR windows only (cheap — the quality proxy is
@@ -431,12 +487,21 @@ class ChannelCacheTask(QRunnable):
 class StreamInferenceTask(QRunnable):
     """Out-of-core OPEN + inference for very long recordings (Plan 2 §6/§9): builds the plot cache
     block-by-block and runs sliding-window inference in a streaming pass — never holding the whole
-    signal. Emits ``plotReady`` (bind the trace) then ``intervalsReady`` (the segmentation). The
-    recoverability pass + false-clean guard are skipped in this mode (they need a whole-signal view);
-    a ``notice`` says so."""
+    signal. Emits ``plotReady`` (bind the trace) then ``intervalsReady`` (the segmentation).
+
+    BOUNDARY REFINEMENT runs here too, exactly as it does in :class:`InferenceTask` (same
+    ``window_intervals`` -> ``refine_intervals`` call on the same per-window grades): a recording must
+    not get coarser, window-resolution segment boundaries just because its file crossed
+    ``streaming.LARGE_RECORD_SAMPLES``. It needs the whole scored signal (``fine_badness`` keys on
+    whole-signal robust statistics), which ``stream_infer`` hands back when the record fits
+    :data:`~biosqa.inference.streaming.REFINE_MAX_MODEL_SAMPLES`; past that it genuinely cannot run and
+    the ``notice`` SAYS SO — as it does for the recoverability pass and the false-clean guard, which
+    need a filtered/prefiltered whole-signal view and are always off in this mode.
+    """
 
     def __init__(self, handle, infer_ch: str, plot_ch: str, plot_channels: list, modality: str,
-                 runner, overlap: float, signals: StreamWorkerSignals, rebuild_plot: bool = True):
+                 runner, overlap: float, signals: StreamWorkerSignals, rebuild_plot: bool = True,
+                 refine_enabled: bool = True, block_sec: float = 300.0, cancel=None):
         super().__init__()
         self.handle = handle
         self.infer_ch = infer_ch
@@ -447,6 +512,12 @@ class StreamInferenceTask(QRunnable):
         self.overlap = float(overlap)
         self.signals = signals
         self.rebuild_plot = bool(rebuild_plot)   # False on a settings re-run (keep the current view)
+        self.refine_enabled = bool(refine_enabled)
+        self.block_sec = float(block_sec)        # streamed read size; tests shrink it to force boundaries
+        self.cancel = cancel                     # cooperative token, checked once per streamed block
+
+    def cancelled(self) -> bool:
+        return self.cancel is not None and self.cancel.is_set()
 
     def run(self) -> None:
         try:
@@ -457,6 +528,8 @@ class StreamInferenceTask(QRunnable):
                 plot_fs = float(h.fs_hz[self.plot_ch])
                 n_plot = int(h.n_samples[self.plot_ch])
                 full_t, full_y, lo, hi = build_plot_cache_blockwise(h, self.plot_ch, plot_fs)
+                if self.cancelled():
+                    return
                 self.signals.plotReady.emit({
                     "modality": self.modality, "handle": h, "sig": None, "streaming": True,
                     "plot_channels": self.plot_channels, "plot_fs": plot_fs,
@@ -465,17 +538,76 @@ class StreamInferenceTask(QRunnable):
                     "infer_ch": self.infer_ch, "fs_in": float(h.fs_hz[self.infer_ch]),
                     "fs_out": float(self.runner.card.fs_hz),
                 })
-            tiers, confs, arts, uncs, stride_sec, window_sec, _n = stream_infer(
-                h, self.infer_ch, self.runner, overlap=self.overlap)
+            # `sig` is the model-rate signal the windows were cut from — retained ONLY when refinement
+            # is on AND the record fits the streaming memory budget (else None, see the notice).
+            (tiers, confs, arts, uncs, gprobs, starts_sec, stride_sec, window_sec, _n,
+             sig) = stream_infer(h, self.infer_ch, self.runner, overlap=self.overlap,
+                                 block_sec=self.block_sec, cancel=self.cancel,
+                                 collect_signal=self.refine_enabled)
+            if self.cancelled():
+                return                     # stream_infer stopped mid-record: its windows are PARTIAL
+            card = self.runner.card
+            grade_order = card.primary_head.class_order
+            # Same conformal decode as the in-memory path: the streamed grade probs are already
+            # calibrated (stream_infer applies the card's grade temperature), which is what the
+            # APS threshold was fit on.
+            conf_thr = getattr(card, "conformal_threshold", None)
+            # The streamed grid is non-uniform too (end-anchored tail window) — bound on the REAL start
+            # times or the tail's grade lands past the end of the recording.
+            starts = starts_sec if len(starts_sec) == len(tiers) else None
+            per_window = dict(
+                artifacts_per_window=arts,
+                uncertainty_per_window=uncs,
+                grade_probs_per_window=(gprobs if (conf_thr is not None and len(gprobs)) else None),
+                class_order=[g.split("_")[0] for g in grade_order],
+                conformal_threshold=conf_thr,
+            )
             intervals = run_length_encode(tiers, confs, stride_sec, window_sec,
-                                          artifacts_per_window=arts,
-                                          uncertainty_per_window=uncs)
+                                          window_starts_sec=starts, **per_window)
+            # ``blocked`` is why refinement did NOT run despite being switched on — "" means it is in
+            # force for this record. It drives the notice, so the app can never be silent about having
+            # produced coarser boundaries than the setting promises.
+            blocked, refined = "", False
+            if self.refine_enabled:
+                if sig is None:
+                    blocked = "its analysis signal is too large to refine"
+                elif starts is not None and len(tiers):
+                    try:
+                        from biosqa.inference.refine import refine_intervals
+                        # The SAME two calls the in-memory path makes: refinement reads the model's raw
+                        # PER-WINDOW grades (still overlapping), not the RLE output — the ceiling on an
+                        # honest relaxation is the BEST grade any window covering that time was given.
+                        model_windows = window_intervals(tiers, confs, starts, window_sec, **per_window)
+                        intervals = refine_intervals(intervals, sig, float(card.fs_hz), self.modality,
+                                                     model_windows=model_windows)
+                        refined = True
+                    except Exception:  # noqa: BLE001 - advisory; never break the primary segmentation
+                        blocked = "boundary refinement could not be computed for it"
+            if self.cancelled():
+                return
             self.signals.intervalsReady.emit(self.modality, intervals)
-            self.signals.notice.emit(
-                "Large recording — streaming analysis (recoverability + false-clean guard are "
-                "disabled in this mode).")
+            self.signals.notice.emit(self._notice(refined, blocked))
         except Exception as exc:  # noqa: BLE001
+            if self.cancelled():
+                return
             self.signals.failed.emit(self.modality, str(exc))
+
+    def _notice(self, refined: bool, blocked: str) -> str:
+        """The streamed-mode notice — it must name EVERY analysis this record did not get, and why.
+
+        The old text mentioned only recoverability + the guard while refinement was silently skipped as
+        well. So the same signal came out with different segment boundaries either side of the streaming
+        threshold, the "Refine boundaries" switch quietly did nothing, and the app's own explanation of
+        the difference did not so much as mention it. Each of the three states below is asserted."""
+        base = "Large recording — streaming analysis: "
+        both_off = "the recoverability pass and the false-clean guard are disabled in this mode."
+        if blocked:                     # refinement is ON but could not run — never leave this unsaid
+            return base + ("boundary refinement, the recoverability pass and the false-clean guard are "
+                           f"ALL disabled for this record ({blocked}) — 'Refine boundaries' has no "
+                           "effect here and the segment boundaries stay at window resolution.")
+        if refined:
+            return base + "boundary refinement is applied; " + both_off
+        return base + both_off          # refinement off in Settings, or nothing was graded to refine
 
 
 class AuditTask(QRunnable):

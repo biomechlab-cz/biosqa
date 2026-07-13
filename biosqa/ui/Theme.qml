@@ -21,6 +21,7 @@ QtObject {
     readonly property color textPrimary: dark ? "#E6EAF2" : "#1A1F2A"   // headings, values
     readonly property color textSecondary: dark ? "#9AA4B6" : "#55607A" // labels
     readonly property color textMuted: dark ? "#626C7E" : "#8A93A6"     // captions, ticks
+    readonly property color textBody: dark ? "#c5cdda" : "#3A4256"      // prose (rationale/audit/bar labels)
 
     // user-configurable accent (default teal); Settings can rebind this to
     // one of `accentOptions` at runtime.
@@ -47,6 +48,11 @@ QtObject {
     readonly property color accentDim: "#1c8f80"                         // logo-gradient dark stop
     readonly property color traceColor: dark ? "#C6D0E2" : "#3A4256"     // waveform stroke
     readonly property color chipBorderMuted: dark ? "#313a49" : "#C7CEDB" // artifact-chip border
+    readonly property color borderHover: dark ? "#33415a" : "#B9C3D2"    // control-hover hairline
+    // Semantic status tones. The raw amber/red read at ~2:1 on the light theme's white
+    // panels, so each is darkened there instead of being hardcoded per call site.
+    readonly property color warnColor: dark ? "#E0A32E" : "#8A5A00"
+    readonly property color dangerColor: dark ? "#E5484D" : "#B3261E"
 
     readonly property int topBarHeight: 52
     readonly property int activityRailWidth: 56
@@ -88,6 +94,19 @@ QtObject {
 
     function currentQualityPalette() {
         return useColorBlindPalette ? qualityPaletteColorBlind : qualityPalette
+    }
+
+    // Neutral descriptor for an ABSENT or unrecognised tier. Every lookup that can miss
+    // must land here: falling back to a real tier (the old `?? palette["Q3"]`) paints an
+    // invented grade -- for an assessment tool a blank "unknown" is the only honest answer.
+    readonly property var unknownTier: ({ color: theme.textMuted, glyph: "", label: "Unknown" })
+
+    function tierInfo(code) {
+        return currentQualityPalette()[code] || unknownTier
+    }
+
+    function isTier(code) {
+        return currentQualityPalette()[code] !== undefined
     }
 
     // ---- modality colors (channel identity, not quality) --------------------

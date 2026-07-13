@@ -13,6 +13,7 @@ import "../workspace"
 // same `selection.relabel()/acceptLabel()/addNote()` slots the dock used.
 Rectangle {
     id: root
+    objectName: "segmentInspector"
     color: Theme.bgApp
 
     readonly property var seg: selection.selectedSegment
@@ -22,16 +23,30 @@ Rectangle {
     // prediction), so the "YOU SET" verdict is tracked locally here.
     property string userTier: ""
 
-    readonly property string tierCode: seg ? seg.tier : "Q3"
-    readonly property var tierInfo: Theme.currentQualityPalette()[tierCode]
-                                    || Theme.currentQualityPalette()["Q3"]
+    // TRUE only when a human actually set the tier on THIS segment. The verdict trail used to
+    // print the model's own prediction under "YOU SET" for every segment, i.e. it presented an
+    // unreviewed model output as a human-verified judgement. `overridden` is the viewmodel's real
+    // relabel flag (read defensively, in case a SelectedSegment doesn't carry it).
+    readonly property bool userSet: root.effTier !== ""
+                                    || (root.seg !== null && root.seg !== undefined
+                                        && root.seg.overridden === true)
+
+    // The tier the REVIEWER chose — never the model's. `userTier` covers a relabel made here;
+    // `seg.correctedTier` is read defensively so that if the selection viewmodel ever exposes the
+    // corrected tier it is picked up (a relabel made in the workspace panel currently arrives with
+    // `overridden` set but no readable tier, and an unknown verdict must render as "—", not as the
+    // model's grade).
+    readonly property string effTier: root.userTier !== "" ? root.userTier
+                                      : ((root.seg && root.seg.correctedTier)
+                                         ? root.seg.correctedTier : "")
+    readonly property var effInfo: Theme.tierInfo(effTier)
+
+    readonly property string tierCode: seg ? seg.tier : ""
+    readonly property var tierInfo: Theme.tierInfo(tierCode)
     readonly property color tierColor: tierInfo.color
-    readonly property string effTier: userTier !== "" ? userTier : tierCode
-    readonly property var effInfo: Theme.currentQualityPalette()[effTier]
-                                   || Theme.currentQualityPalette()["Q3"]
 
     function paletteFor(code) {
-        return Theme.currentQualityPalette()[code] || Theme.currentQualityPalette()["Q3"]
+        return Theme.tierInfo(code)
     }
     function shortDesc(code) {
         return ({ "Q3": "All analysis", "Q2": "Rate / coarse",
@@ -515,7 +530,7 @@ Rectangle {
                                         text: (root.seg && root.seg.rationale.length > 0)
                                               ? root.seg.rationale
                                               : "No rationale available for this segment."
-                                        color: "#c5cdda"
+                                        color: Theme.textBody
                                         font.family: Theme.fontUi
                                         font.pixelSize: 13
                                         lineHeight: 1.5
@@ -675,16 +690,20 @@ Rectangle {
                                         Layout.fillWidth: true
                                         spacing: 5
                                         Text {
-                                            text: "YOU SET"
+                                            objectName: "verdictLabel"
+                                            text: root.userSet ? "YOU SET" : "NOT REVIEWED"
                                             Layout.alignment: Qt.AlignHCenter
                                             color: Theme.textMuted
                                             font.family: Theme.fontUi
                                             font.pixelSize: 10
                                         }
                                         Text {
-                                            text: root.effTier
+                                            objectName: "verdictTier"
+                                            // an em-dash until the reviewer actually picks a tier below;
+                                            // NEVER root.tierCode -- that is the model's own answer
+                                            text: root.effTier !== "" ? root.effTier : "—"
                                             Layout.alignment: Qt.AlignHCenter
-                                            color: root.effInfo.color
+                                            color: root.effTier !== "" ? root.effInfo.color : Theme.textMuted
                                             font.family: Theme.fontMono
                                             font.pixelSize: 14
                                             font.bold: true
@@ -716,7 +735,7 @@ Rectangle {
                                            : Theme.bgPanelAlt
                                     border.width: 1
                                     border.color: active ? p.color
-                                                 : (rowHover.hovered ? "#33415a" : Theme.borderColor)
+                                                 : (rowHover.hovered ? Theme.borderHover : Theme.borderColor)
 
                                     HoverHandler { id: rowHover }
                                     TapHandler {

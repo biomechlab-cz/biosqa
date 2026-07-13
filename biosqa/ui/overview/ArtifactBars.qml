@@ -6,7 +6,11 @@ import "../"
 // Overview artifact breakdown (mockup lines 382-389): a labelled horizontal bar per
 // artifact type, filled in that artifact's own color over a dark track. Fed by
 // `segments.artifactBars` ([{label, value}]); since the viewmodel does not attach a
-// color, one is derived, and a static mockup list is shown until inference runs.
+// color, one is derived.
+//
+// There is NO fallback list: this tile used to show a hardcoded mockup breakdown
+// ("Baseline wander 412, Motion 288, ...") whenever inference had not run, i.e. it
+// invented artifact counts. No data now renders as an explicit empty state.
 //
 // The list is a CLIPPED, scrollable ListView so that an arbitrary number of artifact
 // rows (7+) can never spill below the tile border -- it always fits within the tile.
@@ -23,20 +27,14 @@ ListView {
     // [{ label, value }] from the viewmodel (no color); mapped to {name, count, color}.
     property var bars: []
 
-    readonly property var _static: [
-        { name: "Baseline wander",   count: 412, color: "#E0A32E" },
-        { name: "Motion",            count: 288, color: "#E5484D" },
-        { name: "Muscle noise",      count: 196, color: "#E0A32E" },
-        { name: "Sensor saturation", count: 124, color: "#E5484D" },
-        { name: "Powerline 50 Hz",   count: 92,  color: "#86C440" }
-    ]
+    readonly property bool hasData: root.bars && root.bars.length > 0
 
     // palette used to tint real artifact rows that arrive without a color.
     readonly property var _tint: ["#E0A32E", "#E5484D", "#86C440", "#6E8BFF", "#C08CF2"]
 
     readonly property var _rows: {
-        if (!root.bars || root.bars.length === 0)
-            return root._static
+        if (!root.hasData)
+            return []
         var out = []
         for (var i = 0; i < root.bars.length; i++) {
             var b = root.bars[i]
@@ -56,6 +54,20 @@ ListView {
         return m
     }
 
+    // ---- empty state ---------------------------------------------------------
+    Text {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.topMargin: 6
+        visible: !root.hasData
+        text: "No artifacts detected — run inference."
+        color: Theme.textMuted
+        font.family: Theme.fontUi
+        font.pixelSize: 12
+        wrapMode: Text.WordWrap
+    }
+
     delegate: ColumnLayout {
         id: barRow
         required property var modelData
@@ -67,7 +79,7 @@ ListView {
             spacing: 8
             Text {
                 text: barRow.modelData.name
-                color: "#c5cdda"
+                color: Theme.textBody
                 font.family: Theme.fontUi
                 font.pixelSize: 12
                 elide: Text.ElideRight

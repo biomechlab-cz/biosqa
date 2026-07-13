@@ -9,10 +9,18 @@ import "../"
 Item {
     id: root
 
-    property string tier: "Q3"
+    property string tier: ""
     property real confidence: 1.0
 
-    readonly property var entry: Theme.currentQualityPalette()[tier] ?? Theme.currentQualityPalette()["Q3"]
+    readonly property var entry: Theme.tierInfo(tier)
+
+    // Below ~24px the glyph + code are dropped and the band is COLOR-ONLY, so the grade
+    // has to reach assistive tech some other way.
+    Accessible.role: Accessible.Graphic
+    Accessible.name: Theme.isTier(root.tier)
+                     ? (root.tier + " " + root.entry.label + ", "
+                        + Math.round(root.confidence * 100) + "% confidence")
+                     : "No grade"
 
     Rectangle {
         anchors.fill: parent

@@ -46,7 +46,7 @@ ColumnLayout {
             anchors.topMargin: 11
             anchors.bottomMargin: 11
             text: root.rationale.length > 0 ? root.rationale : "No rationale available for this segment."
-            color: "#c5cdda"
+            color: Theme.textBody
             font.family: Theme.fontUi
             font.pixelSize: 12
             lineHeight: 1.45

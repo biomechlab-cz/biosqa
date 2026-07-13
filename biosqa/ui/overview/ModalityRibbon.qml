@@ -13,21 +13,35 @@ ColumnLayout {
     readonly property string _mod: recordings.currentModality || ""
     readonly property real _dur: recordings.currentDurationSec
 
+    // `segments.tierFractions` is {} until the segmenter produces intervals. This tile used to
+    // print "0%" for every tier in that state, i.e. it asserted a MEASURED zero share for Q0..Q3
+    // on a recording nothing had graded yet. Same contract as DonutChart/ArtifactBars: no
+    // inference => an em-dash, never a zero.
+    readonly property bool hasData: {
+        var f = segments.tierFractions
+        return !!f && Object.keys(f).length > 0
+    }
+    readonly property string usableText: {
+        if (!root.hasData)
+            return "—"
+        var f = segments.tierFractions
+        return (((f["Q3"] || 0) + (f["Q2"] || 0)) * 100).toFixed(1) + "%"
+    }
+
     function _fmtHMS(sec) {
         sec = Math.max(0, Math.round(sec || 0))
         var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60
         function p(n) { return (n < 10 ? "0" : "") + n }
         return p(h) + ":" + p(m) + ":" + p(s)
     }
+    // A tier ABSENT from a non-empty tierFractions really did occupy 0% of the recording
+    // (the model builds the dict only from tiers with >0 duration), so "0.0%" is a measurement
+    // there -- exactly what the DonutChart legend prints. Only the empty dict is "not measured".
     function _pct(k) {
+        if (!root.hasData)
+            return "—"
         var f = segments.tierFractions
-        return (f && f[k] > 0) ? (f[k] * 100).toFixed(1) + "%" : "0%"
-    }
-    function _usablePct() {
-        var f = segments.tierFractions
-        if (f && Object.keys(f).length > 0)
-            return (((f["Q3"] || 0) + (f["Q2"] || 0)) * 100).toFixed(1) + "%"
-        return "—"
+        return ((f[k] || 0) * 100).toFixed(1) + "%"
     }
 
     // ---- empty hint (no modality loaded) -------------------------------------
@@ -61,8 +75,9 @@ ColumnLayout {
         }
         Item { Layout.fillWidth: true }
         Text {
-            text: root._usablePct() + " usable"
-            color: Theme.textSecondary
+            objectName: "ribbonUsable"
+            text: root.usableText + " usable"
+            color: root.hasData ? Theme.textSecondary : Theme.textMuted
             font.family: Theme.fontMono
             font.pixelSize: 12
         }
@@ -121,8 +136,9 @@ ColumnLayout {
                     font.weight: Font.DemiBold
                 }
                 Text {
+                    objectName: "ribbonPct" + modelData
                     text: root._pct(modelData)
-                    color: Theme.textSecondary
+                    color: root.hasData ? Theme.textSecondary : Theme.textMuted
                     font.family: Theme.fontMono
                     font.pixelSize: 11
                     Layout.fillWidth: true

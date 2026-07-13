@@ -60,7 +60,7 @@ ColumnLayout {
                         id: segTxt
                         anchors.centerIn: parent
                         text: segCell.modelData.t
-                        color: segCell.on ? "#062521" : Theme.textSecondary
+                        color: segCell.on ? Theme.chipDark : Theme.textSecondary
                         font.family: Theme.fontUi; font.pixelSize: 10
                         font.weight: segCell.on ? Font.DemiBold : Font.Normal
                     }
@@ -80,7 +80,7 @@ ColumnLayout {
         visible: root.discordant
         Layout.fillWidth: true
         color: Qt.rgba(0.878, 0.639, 0.18, 0.12)      // amber tint
-        border.color: "#E0A32E"; border.width: 1
+        border.color: Theme.warnColor; border.width: 1
         radius: 8
         implicitHeight: discTxt.implicitHeight + 16
         Text {
@@ -90,7 +90,7 @@ ColumnLayout {
             text: "⚠ Classical indices disagree with the model's " + root.tier
                   + " grade here (SQI consensus " + Math.round(guard.sqiConsensus * 100)
                   + "%). Inspect before trusting the clean score."
-            color: "#E0A32E"
+            color: Theme.warnColor
             font.family: Theme.fontUi; font.pixelSize: 10
             lineHeight: 1.3; wrapMode: Text.WordWrap
         }
@@ -118,8 +118,11 @@ ColumnLayout {
                 Rectangle {
                     height: parent.height; radius: 3
                     width: Math.max(2, parent.width * Math.min(1, Math.max(0, modelData.bar)))
-                    color: modelData.bar > 0.66 ? "#2FBF71"                 // green = good quality
-                         : (modelData.bar > 0.33 ? "#E0A32E" : "#E5484D")   // amber → red = poor
+                    // routed through the tier palette, so the color-blind-safe toggle reaches
+                    // these bars too instead of leaving them red/green-only
+                    color: modelData.bar > 0.66 ? Theme.tierInfo("Q3").color
+                         : (modelData.bar > 0.33 ? Theme.tierInfo("Q1").color
+                                                 : Theme.tierInfo("Q0").color)
                 }
             }
             Text {

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from biosqa.model.model_card import (
     ModelCardError,
     load_model_card,
+    sha256_file,
     validate_onnx_input_shape,
 )
 
@@ -199,3 +201,95 @@ def test_validate_onnx_input_shape_rejects_wrong_channel_or_rank():
         validate_onnx_input_shape(card, (1, 2, 2048))       # channel != 1
     with pytest.raises(ModelCardError):
         validate_onnx_input_shape(card, (1, 1, 2048, 1))    # wrong rank
+
+
+# --- calibration temperatures -----------------------------------------------
+
+CALIBRATED_CARD = {
+    **VALID_CARD,
+    "calibration": {"temperatures": {"grade": 0.4, "usable": 3.5484}},
+}
+
+
+def test_usable_temperature_exposed_alongside_grade():
+    card = load_model_card_from_dict(CALIBRATED_CARD)
+    assert card.grade_temperature == pytest.approx(0.4)
+    assert card.usable_temperature == pytest.approx(3.5484)
+
+
+def test_usable_temperature_defaults_to_identity_when_absent():
+    # No calibration block at all, and a calibration block without the 'usable' key: both
+    # must fall back to the 1.0 no-op rather than borrowing the grade temperature.
+    assert load_model_card_from_dict(VALID_CARD).usable_temperature == 1.0
+    grade_only = {**VALID_CARD, "calibration": {"temperatures": {"grade": 0.4}}}
+    assert load_model_card_from_dict(grade_only).usable_temperature == 1.0
+
+
+# --- onnx_sha256 model-artifact integrity (optional field) -------------------
+
+
+def _write_onnx(tmp_path, payload: bytes = b"fake onnx bytes"):
+    path = tmp_path / "ecg.onnx"
+    path.write_bytes(payload)
+    return path
+
+
+def test_verify_onnx_skipped_when_card_has_no_digest(tmp_path):
+    # Back-compat: every card shipped before onnx_sha256 existed must keep loading, and
+    # verification is SKIPPED (returns None) rather than faked as a pass.
+    card = load_model_card(_write_card(tmp_path, VALID_CARD))
+    assert card.onnx_sha256 is None
+    assert card.verify_onnx(_write_onnx(tmp_path)) is None
+
+
+def test_verify_onnx_accepts_matching_digest(tmp_path):
+    onnx = _write_onnx(tmp_path)
+    digest = sha256_file(onnx)
+    card = load_model_card(_write_card(tmp_path, {**VALID_CARD, "onnx_sha256": digest}))
+    assert card.onnx_sha256 == digest
+    assert card.verify_onnx(onnx) == digest
+
+
+def test_verify_onnx_rejects_swapped_model(tmp_path):
+    onnx = _write_onnx(tmp_path, b"the model the card was written for")
+    card = load_model_card(_write_card(tmp_path, {**VALID_CARD, "onnx_sha256": sha256_file(onnx)}))
+    onnx.write_bytes(b"a DIFFERENT model swapped in behind the card")
+    with pytest.raises(ModelCardError):
+        card.verify_onnx(onnx)
+
+
+def test_verify_onnx_accepts_prefixed_and_uppercase_digest(tmp_path):
+    onnx = _write_onnx(tmp_path)
+    digest = sha256_file(onnx)
+    prefixed = {**VALID_CARD, "onnx_sha256": "sha256:" + digest.upper()}
+    card = load_model_card(_write_card(tmp_path, prefixed))
+    assert card.onnx_sha256 == digest  # canonicalized to bare lowercase hex
+    assert card.verify_onnx(onnx) == digest
+
+
+def test_malformed_onnx_sha256_is_a_hard_error(tmp_path):
+    # A typo'd digest must fail loudly, not silently degrade to "unverified".
+    for bad in ("deadbeef", "z" * 64, 12345):
+        with pytest.raises(ModelCardError):
+            load_model_card(_write_card(tmp_path, {**VALID_CARD, "onnx_sha256": bad}))
+
+
+def test_verify_onnx_missing_file_raises(tmp_path):
+    card = load_model_card(_write_card(tmp_path, {**VALID_CARD, "onnx_sha256": "a" * 64}))
+    with pytest.raises(ModelCardError):
+        card.verify_onnx(tmp_path / "absent.onnx")
+
+
+def test_shipped_cards_still_load(tmp_path):
+    # The cards actually shipped in app/models carry no onnx_sha256; adding the field must
+    # not have broken them. Guards the "optional" half of the contract against a future
+    # tightening that would make the digest mandatory.
+    models_dir = Path(__file__).resolve().parents[1] / "models"
+    cards = sorted(models_dir.glob("*.model_card.json"))
+    if not cards:
+        pytest.skip("no shipped model cards in app/models")
+    for path in cards:
+        card = load_model_card(path)
+        assert card.onnx_sha256 is None
+        assert card.usable_temperature > 0
+        assert card.verify_onnx(models_dir / f"{card.modality}.onnx") is None

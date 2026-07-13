@@ -41,7 +41,8 @@ ColumnLayout {
         model: root.verdicts
         delegate: RowLayout {
             required property var modelData
-            readonly property color tone: modelData.usable ? "#2FBF71" : "#E0A32E"
+            readonly property color tone: modelData.usable ? Theme.tierInfo("Q3").color
+                                                          : Theme.tierInfo("Q1").color
             Layout.fillWidth: true
             spacing: 8
             Rectangle {

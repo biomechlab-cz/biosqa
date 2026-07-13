@@ -46,3 +46,42 @@ def test_training_queue_persists_corrected_tier():
 def test_save_queue_no_selection_returns_empty():
     s = SelectionController()
     assert s.saveToTrainingQueue() == ""
+
+
+def test_context_change_drops_reviews():
+    """A review belongs to ONE (recording, channel, model, revision). Switching recording — or
+    re-segmenting the same one — drops it wholesale; it is never re-anchored to whatever now happens
+    to start at the same second (the override store was keyed by time alone and lived forever)."""
+    _, s = _wired()
+    s.set_context(recording="A.hea", channel="II", channel_index=0, model_version="v1", revision=1)
+    s.selectByAllIndex(0)
+    s.relabel("Q1")
+    s.addNote("A's note")
+    assert len(s.collected_overrides()) == 1
+
+    dropped = s.set_context(recording="B.hea", channel="II", channel_index=0,
+                            model_version="v1", revision=1)   # a DIFFERENT recording
+    assert dropped == 1
+    assert s.collected_overrides() == [] and s.selectedSegment is None
+
+    s.selectByAllIndex(0)
+    s.relabel("Q1")
+    dropped = s.set_context(recording="B.hea", channel="II", channel_index=0,
+                            model_version="v1", revision=2)   # same recording, RE-SEGMENTED
+    assert dropped == 1 and s.collected_overrides() == []
+
+
+def test_training_row_carries_recording_identity():
+    """The active-learning sink is unattributable without it: a (start, end) pair alone matches a
+    segment in every recording ever opened."""
+    QStandardPaths.setTestModeEnabled(True)
+    _, s = _wired()
+    s.set_context(recording="/data/recA.hea", channel="II", channel_index=1,
+                  model_version="ecg-v2", revision=3)
+    s.selectByAllIndex(1)
+    s.relabel("Q2")
+    path = s.saveToTrainingQueue()
+    rec = [json.loads(x) for x in open(path, encoding="utf-8") if x.strip()][-1]
+    assert rec["recording"] == "/data/recA.hea" and rec["channel"] == "II"
+    assert rec["modelVersion"] == "ecg-v2" and rec["revision"] == 3
+    assert rec["timestamp"].startswith("20") and rec["timestamp"].endswith("+00:00")

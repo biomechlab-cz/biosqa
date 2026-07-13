@@ -174,11 +174,18 @@ Rectangle {
                 Label {
                     // Compact: status + precision + latency. The model version lives in
                     // the Overview model card, so it's dropped here to keep the pill short.
+                    // Precision and latency are FACTS ABOUT THE MODEL: each clause appears only
+                    // when the engine actually reported it. The pill used to hardcode
+                    // "FP32 · 2.1 ms/win" — a latency nothing had ever measured.
+                    objectName: "modelStatusText"
                     text: {
-                        var lat = inference.latencyMs > 0
-                            ? (inference.latencyMs.toFixed(1) + " ms/win")
-                            : "2.1 ms/win"
-                        return (inference.statusText || "no model") + " · FP32 · " + lat
+                        var parts = [inference.statusText || "no model"]
+                        var prec = inference.precision !== undefined ? inference.precision : ""
+                        if (prec.length > 0)
+                            parts.push(prec)
+                        if (inference.latencyMs > 0)
+                            parts.push(inference.latencyMs.toFixed(1) + " ms/win")
+                        return parts.join(" · ")
                     }
                     color: Theme.tealText
                     font.family: Theme.fontMono
@@ -203,6 +210,9 @@ Rectangle {
             ToolTip.visible: hovered
             ToolTip.text: Theme.dark ? "Switch to light theme" : "Switch to dark theme"
             ToolTip.delay: 400
+
+            Accessible.role: Accessible.Button
+            Accessible.name: themeBtn.ToolTip.text
 
             background: Rectangle {
                 radius: Theme.radiusControl

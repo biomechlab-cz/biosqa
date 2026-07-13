@@ -64,3 +64,27 @@ def test_set_lane_channels_tracks_visible_set():
     assert "B" not in c._caches               # freed (not the primary)
     c.setLaneChannels(["A", "B"])
     assert c.laneChannels == ["A", "B"] and c.laneCount == 2
+
+
+def test_window_xy_decimation_keeps_a_spike():
+    """The SECOND decimation (visible window -> WINDOW_POINTS) must keep extrema too: striding here
+    would throw away the very spike the min/max plot cache was built to preserve."""
+    c = SignalViewController()
+    fs, n = 100.0, 200_000                    # >> WINDOW_POINTS -> the decimation branch runs
+    t = np.arange(n, dtype=np.float64) / fs
+    y = np.sin(t)
+    spike_i = 123_457                         # off any plausible stride grid
+    y[spike_i] = 9.0
+    c._channels = ["A"]
+    c._fs = fs
+    c._n_samples = n
+    c._duration_sec = n / fs
+    c._view_start_sec, c._view_end_sec = 0.0, n / fs
+    c._caches = {"A": (t, y, -1.0, 9.0)}
+    c._lanes = ["A"]
+    s = _FakeSeries()
+    c._series_map = {"A": s}
+    c._refill_lane("A", force_y=True)
+    assert s.yw.size <= c.WINDOW_POINTS + 2   # still inside the per-frame point budget
+    assert s.yw.max() == 9.0                  # ...and the spike is on screen
+    assert np.all(np.diff(s.tw) >= 0)         # x stays monotone (min/max emitted in time order)

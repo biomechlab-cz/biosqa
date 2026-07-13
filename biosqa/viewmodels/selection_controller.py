@@ -9,6 +9,8 @@ object.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from PySide6.QtCore import Property, QObject, QStandardPaths, Signal, Slot
@@ -20,6 +22,23 @@ def _training_queue_path() -> Path:
     """Durable app-data JSONL sink for reviewer corrections (the active-learning reverse channel)."""
     base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
     return Path(base or (Path.home() / ".biosqa")) / "training_queue.jsonl"
+
+
+@dataclass(frozen=True)
+class AnalysisContext:
+    """Immutable identity of the analysis a human review belongs to.
+
+    A review is only valid for the exact (recording, graded channel, model, segmentation revision)
+    that produced the interval it was made against. A different recording, a different graded
+    channel, or a re-segmentation (settings change) means that interval no longer exists — so the
+    review is DROPPED rather than re-anchored onto whatever now starts at the same second.
+    """
+
+    recording: str = ""
+    channel: str = ""
+    channel_index: int = -1
+    model_version: str = ""
+    revision: int = 0
 
 
 class SelectedSegment(QObject):
@@ -171,12 +190,41 @@ class SelectionController(QObject):
         self._segments = None  # QualitySegmentModel, attached in build_engine
         # One human-review record per segment, keyed by (round(start,3), round(end,3)) so accept /
         # relabel / addNote for the SAME segment merge (order-independent) instead of appending
-        # duplicates or clobbering each other's fields. value = {"orig", "new_tier", "note"}.
+        # duplicates or clobbering each other's fields. value = {"orig", "new_tier", "note",
+        # "context"} — "context" binds the review to the analysis it was made against (see
+        # set_context); a review is NEVER valid outside its own AnalysisContext.
         self._overrides: dict[tuple, dict] = {}
+        self._context = AnalysisContext()
 
     def attach_segments(self, segments) -> None:
         """Give the controller the segment model so QML can select by row index."""
         self._segments = segments
+
+    def set_context(self, recording: str = "", channel: str = "", channel_index: int = -1,
+                    model_version: str = "", revision: int = 0) -> int:
+        """Bind the controller to the analysis that produced the CURRENT segmentation and DROP every
+        review recorded under a different one; returns how many reviews were dropped.
+
+        This is the recording-identity gate. ``_overrides`` is process-global and was keyed by TIME
+        alone, so a review of recording A at t=10 s was re-attached, on export, to whatever recording
+        B happened to have starting at 10.0 s — fabricated human review under the wrong recording.
+        When the context changes, the intervals the reviews were anchored to are gone, so dropping
+        them (and reporting the count) is the only honest outcome; re-anchoring is not.
+        """
+        ctx = AnalysisContext(str(recording), str(channel), int(channel_index),
+                              str(model_version), int(revision))
+        if ctx == self._context:
+            return 0
+        dropped = len(self._overrides)
+        self._overrides = {}
+        self._context = ctx
+        self.clear()
+        return dropped
+
+    def analysis_context(self) -> AnalysisContext:
+        """Identity of the analysis every current review/export belongs to (ExportController reads it
+        for the export provenance + the WFDB annotation channel)."""
+        return self._context
 
     def _get_selected_segment(self) -> SelectedSegment | None:
         return self._selected
@@ -244,6 +292,7 @@ class SelectionController(QObject):
             rec["new_tier"] = new_tier
         if note is not None:
             rec["note"] = note
+        rec["context"] = self._context   # the review is bound to THIS analysis and no other
         self._overrides[key] = rec
         self.overrideRecorded.emit(s.startSec, s.endSec, rec["orig"], rec["new_tier"], rec["note"])
 
@@ -353,7 +402,14 @@ class SelectionController(QObject):
         model_tier = getattr(s._interval, "model_tier", "") or s._interval.tier
         tier = s._corrected_tier if (s._overridden and s._corrected_tier) else s._interval.tier
         corrected = bool(s._overridden) or (model_tier != s._interval.tier)
+        ctx = self._context
         rec = {
+            # WHICH recording/channel/model/segmentation this label belongs to, plus when it was
+            # made: without them the training sink is unattributable (a start/end pair alone matches
+            # a segment in every record) and cannot be joined back to the signal it labels.
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "recording": ctx.recording, "channel": ctx.channel,
+            "modelVersion": ctx.model_version, "revision": int(ctx.revision),
             "startSec": float(s.startSec), "endSec": float(s.endSec),
             "tier": tier, "modelTier": model_tier, "corrected": corrected,
             "flagged": bool(flagged),
@@ -382,7 +438,10 @@ class SelectionController(QObject):
         return self._write_training_row(flagged=True)
 
     def collected_overrides(self) -> list[tuple]:
-        """All recorded reviews/overrides as ``(start, end, orig_tier, new_tier, note)`` tuples
-        (for ExportController). ``new_tier`` is "" for accept-only reviews."""
+        """Reviews/overrides for the CURRENT analysis context as ``(start, end, orig_tier, new_tier,
+        note)`` tuples (for ExportController). ``new_tier`` is "" for accept-only reviews. Reviews
+        made under any other context are never returned — ``set_context`` already dropped them; the
+        context filter here is the second gate, so no export can carry another recording's review."""
+        ctx = self._context
         return [(k[0], k[1], v["orig"], v["new_tier"], v["note"])
-                for k, v in self._overrides.items()]
+                for k, v in self._overrides.items() if v.get("context", ctx) == ctx]

@@ -14,6 +14,7 @@ from PySide6.QtCharts import QLineSeries
 from PySide6.QtCore import Property, QObject, QThreadPool, Signal, Slot
 
 from biosqa.io.loaders import read_window
+from biosqa.io.pyramid import minmax_envelope_indices
 
 #: max samples pulled for a miniature/zoom envelope on the disk-read fallback path (the cache-slice path
 #: has no such read); a preview decimates to <=800 buckets so more resolution than this is wasted.
@@ -132,7 +133,11 @@ class SignalViewController(QObject):
 
     def _window_xy(self, full_t, full_y):
         """Decimate the current view window (+ a small margin) of a full-res cache to
-        ``<= WINDOW_POINTS`` points → ``(tw, yw)`` float arrays, or ``(None, None)``."""
+        ``<= WINDOW_POINTS`` points → ``(tw, yw)`` float arrays, or ``(None, None)``.
+
+        This is the SECOND decimation (the cache itself is the first): it too keeps a min/max bucket
+        envelope rather than striding, so a spike the cache preserved is not thrown away here instead.
+        Both stages must keep extrema or neither is worth anything."""
         if full_t is None or full_y is None or full_t.size < 2:
             return None, None
         a, b = self._view_start_sec, self._view_end_sec
@@ -141,13 +146,18 @@ class SignalViewController(QObject):
         i0 = max(0, int(np.searchsorted(full_t, a - margin, side="left")))
         i1 = max(i0 + 2, int(np.searchsorted(full_t, b + margin, side="right")))
         if i1 - i0 > self.WINDOW_POINTS:
-            # Absolute-aligned stride (multiples of `stride`) so the sample phase is stable while
-            # panning — a window-relative slice would make the trace shimmer as you scroll.
-            cache_dt = float(full_t[1] - full_t[0])
-            approx_n = (span * 1.24) / max(cache_dt, 1e-12)
-            stride = max(1, int(np.ceil(approx_n / self.WINDOW_POINTS)))
-            idx = np.arange(i0 - (i0 % stride), i1, stride)
-            return np.ascontiguousarray(full_t[idx]), np.ascontiguousarray(full_y[idx])
+            # Bucket width from the cache's MEAN point density (the envelope cache is not uniformly
+            # spaced, so full_t[1]-full_t[0] is not its dt) and buckets absolutely aligned (multiples
+            # of `spb`) so the bucket phase is stable while panning — a window-relative grid would
+            # make the trace shimmer as you scroll.
+            density = full_t.size / max(float(full_t[-1] - full_t[0]), 1e-12)   # cache points / sec
+            approx_n = span * 1.24 * density
+            spb = max(2, int(np.ceil(approx_n / max(1, self.WINDOW_POINTS // 2))))
+            a0 = i0 - (i0 % spb)
+            seg_t, seg_y = full_t[a0:i1], full_y[a0:i1]
+            idx = minmax_envelope_indices(seg_y, spb)
+            return (np.ascontiguousarray(seg_t[idx], dtype=np.float64),
+                    np.ascontiguousarray(seg_y[idx], dtype=np.float64))
         return (np.ascontiguousarray(full_t[i0:i1], dtype=np.float64),
                 np.ascontiguousarray(full_y[i0:i1], dtype=np.float64))
 
@@ -255,8 +265,18 @@ class SignalViewController(QObject):
     @Slot(list)
     def setLaneChannels(self, channels: list) -> None:  # noqa: N802
         """Set the ordered list of VISIBLE channels to draw (from the channel-list toggles). Drops
-        series/caches for channels no longer shown, then re-lays-out; QML re-binds via loadTraceFor."""
+        series/caches for channels no longer shown, then re-lays-out; QML re-binds via loadTraceFor.
+
+        A lane is a DRAWN TRACE, so with NO recording bound there are no lanes. That is not pedantry:
+        the channel list is populated for a FAILED open too (the channels exist; nothing was graded),
+        and ``SignalView.qml`` mirrors it into lanes on ``countChanged`` — which left an empty lane
+        placeholder, with no handle and no cache, for a recording that was never analysed. The plot on
+        a failed open must be genuinely empty, not empty-looking. The real binding paths
+        (:meth:`set_recording` / :meth:`set_recording_cached`) set ``_lanes`` themselves once a handle
+        exists, so this costs the normal open nothing."""
         lanes = [str(c) for c in channels if c][: self.MAX_PLOT_LANES]
+        if self._handle is None:
+            lanes = []
         if lanes == self._lanes:
             return
         self._lanes = lanes
@@ -288,6 +308,42 @@ class SignalViewController(QObject):
         self._refill_window()   # re-window the visible slice (pan/zoom hot path)
 
     # -- recording binding (called by the Coordinator on open) ---------------
+    def clear(self) -> None:
+        """Drop EVERY trace of the open recording, leaving an honestly EMPTY plot.
+
+        The Coordinator calls this on each open, BEFORE anything about the new recording can fail
+        (``Coordinator._invalidate``). Without it a failed open (e.g. a modality whose model isn't in
+        ``models/``) left the PREVIOUS recording's waveform drawn and its handle bound — so
+        ``valueAt``/``curveForRange``/zoom kept serving recording A's samples while the title, channel
+        list, modality and fs already said B. An empty plot beats a plausible wrong one.
+        """
+        for series in list(self._series_map.values()):
+            try:
+                series.clear()          # erase the drawn points now, not on the next QML relayout
+            except RuntimeError:        # series already destroyed (view swap / shutdown)
+                pass
+        self._handle = None
+        self._channels = []
+        self._lanes = []
+        self._fs = 1.0
+        self._n_samples = 0
+        self._duration_sec = 0.0
+        self._full_t = self._full_y = None
+        self._trace_lo, self._trace_hi = -1.0, 1.0
+        self._view_lo, self._view_hi = -1.0, 1.0
+        self._caches = {}
+        self._series_map = {}
+        self._cache_carriers = []
+        self._pending_channels = set()
+        self._load_gen += 1             # any in-flight lane read now belongs to a superseded recording
+        self._view_start_sec = 0.0
+        self._view_end_sec = 10.0
+        self.durationSecChanged.emit()
+        self.viewStartSecChanged.emit()
+        self.viewEndSecChanged.emit()
+        self.traceRangeChanged.emit()
+        self.laneLayoutChanged.emit()   # QML tears the (now empty) lane pool down
+
     def set_recording(self, handle, channels, fs: float) -> None:
         """Bind the plot to a recording's channels and draw the head window.
 

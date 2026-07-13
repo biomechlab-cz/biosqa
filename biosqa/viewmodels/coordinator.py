@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from threading import Event
 
 import numpy as np
 from PySide6.QtCore import QObject, QThreadPool, QTimer, Slot
@@ -97,12 +98,20 @@ class Coordinator(QObject):
         #: for a STREAMED (large) recording there is no in-memory signal; audit re-reads the selected
         #: window from the handle. (modality, handle, infer_channel, fs_in, fs_out).
         self._current_stream: tuple | None = None
+        #: identity of what is being graded: (recording path, analyzed channel, its index in the
+        #: RECORD's channel order). Every artifact — plot, bands, reviews, export — is bound to this
+        #: one channel of this one recording; None = nothing analyzed.
+        self._analyzed: tuple[str, str, int] | None = None
+        self._plot_channels: list[str] = []   # lane order, analyzed channel first
+        self._dropped_reviews = 0             # reviews an in-progress re-run of the SAME record dropped
         self._guard_reports: dict[str, dict] = {}          # modality -> latest guard report
         # Generation guards: every task carrier is stamped with the generation it was dispatched
         # under; a result whose stamp is stale (a newer open / re-run superseded it) is DROPPED, so
         # opening another file or changing a setting mid-flight can't load old data into the new view.
         self._recording_gen = 0    # bumped on every open (guards plot binding + current-signal state)
         self._inference_gen = 0    # bumped on every inference dispatch (guards intervals/guard/notice)
+        #: cooperative cancel token of the IN-FLIGHT inference/stream (see :meth:`_new_cancel_token`).
+        self._infer_cancel: Event | None = None
         if selection is not None and hasattr(selection, "attach_segments"):
             selection.attach_segments(segments)
         # Bump the selection generation from the AUTHORITATIVE selection signal, so a saliency result from a
@@ -118,18 +127,19 @@ class Coordinator(QObject):
         # Analysis-setting changes re-segment the OPEN recording, but DEBOUNCED: a bSQI-slider drag
         # (or a burst of toggles) emits many signals; without coalescing each dispatched a full
         # (double, under recovery) inference pass. The timer collapses a burst into one re-run.
-        # Overlap affects both paths → full re-run/re-stream; guard/recovery/bSQI/refine are disabled
-        # in streaming mode, so they only re-run normal records.
+        # Overlap AND refinement affect BOTH paths → full re-run/re-stream. Only the guard, the
+        # recoverability pass and the bSQI threshold are streaming-disabled, so they re-run normal
+        # records alone (re-streaming a multi-hour record for a setting it cannot use is pure waste).
         self._rerun_timer = QTimer(self)
         self._rerun_timer.setSingleShot(True)
         self._rerun_timer.setInterval(200)
         self._rerun_timer.timeout.connect(self._do_scheduled_rerun)
-        self._pending_overlap = False
-        overlap_sig = getattr(settings, "windowOverlapChanged", None)
-        if overlap_sig is not None:
-            overlap_sig.connect(self._schedule_rerun)
-        for sig_name in ("recoveryEnabledChanged", "refineBoundariesChanged",
-                         "guardEnabledChanged", "bsqiThresholdChanged"):
+        self._pending_full = False   # a pending change that a STREAMED record must re-stream for
+        for sig_name in ("windowOverlapChanged", "refineBoundariesChanged"):
+            sig = getattr(settings, sig_name, None)
+            if sig is not None:
+                sig.connect(self._schedule_rerun)
+        for sig_name in ("recoveryEnabledChanged", "guardEnabledChanged", "bsqiThresholdChanged"):
             sig = getattr(settings, sig_name, None)
             if sig is not None:
                 sig.connect(self._schedule_rerun_normal)
@@ -143,7 +153,7 @@ class Coordinator(QObject):
 
     @Slot()
     def _schedule_rerun(self) -> None:
-        self._pending_overlap = True
+        self._pending_full = True
         self._rerun_timer.start()
 
     @Slot()
@@ -151,11 +161,16 @@ class Coordinator(QObject):
         self._rerun_timer.start()
 
     def _do_scheduled_rerun(self) -> None:
-        if self._pending_overlap:
-            self._pending_overlap = False
-            self._rerun_inference()          # overlap changed → full re-run/re-stream
+        if self._pending_full:
+            self._pending_full = False
+            self._rerun_inference()          # overlap/refinement changed → full re-run/re-stream
         else:
             self._rerun_inference_normal()
+
+    def _refine_enabled(self) -> bool:
+        """The "Refine boundaries" setting. Read by BOTH dispatch paths: refinement is not a
+        normal-record-only feature, so a streamed record must honour the toggle too."""
+        return bool(getattr(self._settings, "refineBoundaries", True)) if self._settings else True
 
     def _runner(self, modality: str) -> OnnxRunner:
         runner = self._runners.get(modality)
@@ -170,35 +185,136 @@ class Coordinator(QObject):
         newer open / re-run has superseded it, so this result must be ignored."""
         return getattr(self.sender(), gen_attr, current) != current
 
+    def _new_cancel_token(self) -> Event:
+        """CANCEL whatever inference/stream is in flight and return a FRESH token for the run about
+        to be dispatched.
+
+        Cooperative: the superseded task returns at its next phase / streamed-block boundary and
+        emits NOTHING AT ALL — not even ``failed`` — so it can neither burn pool threads on work
+        nobody will look at (``_recoverability`` is a whole SECOND ONNX pass; a streamed job reads
+        the ENTIRE record) nor clobber the live run's status line."""
+        self._cancel_inflight()
+        self._infer_cancel = Event()
+        return self._infer_cancel
+
+    def _cancel_inflight(self) -> None:
+        """Set the in-flight run's token (if any) and forget it. Used on its own by ``_invalidate``:
+        opening another recording must stop the previous one's analysis, not merely discard its
+        result once it finally lands."""
+        if self._infer_cancel is not None:
+            self._infer_cancel.set()
+            self._infer_cancel = None
+
+    def _invalidate(self, path: str) -> None:
+        """Make an open an ATOMIC state transition: drop EVERY artifact of the previously-analyzed
+        recording before anything about the new one can fail.
+
+        Runs first in ``on_recording_opened``, so a miss/failure downstream (a modality model that
+        won't load) can no longer leave the previous recording's waveform, channel list, segments,
+        quality bands, minimap, overview, saliency, model card, guard report or human reviews on
+        screen — and exportable — under the NEW recording's name, fs and provenance."""
+        self._recording_gen += 1
+        self._inference_gen += 1
+        self._cancel_inflight()          # stop the old analysis; don't just ignore its result
+        self._current = None
+        self._current_stream = None
+        self._plot_channels = []
+        self._guard_reports.clear()
+        self._pending.clear()
+        self._segments.load_intervals([])          # the segment model had no other reset path at all
+        # The PLOT is per-recording state too: without this the previous recording's waveform stayed
+        # drawn (and its handle bound, so valueAt/curveForRange kept answering with ITS samples)
+        # while the title, channel list, modality and fs already named the new one.
+        if self._signal_view is not None and hasattr(self._signal_view, "clear"):
+            self._signal_view.clear()
+        self._channels.set_channels([])            # ...and so is the channel list
+        self._blank_model_card()                   # ...and the model provenance panel
+        prev_path = self._analyzed[0] if self._analyzed else ""
+        self._analyzed = None
+        dropped = 0
+        if self._selection is not None:
+            if hasattr(self._selection, "set_context"):
+                dropped = int(self._selection.set_context(recording=path))
+            if hasattr(self._selection, "clear"):
+                self._selection.clear()
+        # Re-opening the SAME recording re-segments it, so its reviews are dropped too — say so on
+        # the next status line rather than losing them silently (a different recording just ends the
+        # previous recording's review session; that needs no notice).
+        self._dropped_reviews = dropped if (prev_path and prev_path == path) else 0
+        if self._guard is not None:
+            self._guard.reset()   # guard/data-quality banner, saliency, attribution, SQI, audit
+        rgen, igen = self._recording_gen, self._inference_gen
+        self._load_carriers = self._prune(self._load_carriers, "_rgen", rgen)
+        self._stream_carriers = self._prune(self._stream_carriers, "_rgen", rgen)
+        self._audit_carriers = self._prune(self._audit_carriers, "_rgen", rgen)
+        self._saliency_carriers = self._prune(self._saliency_carriers, "_rgen", rgen)
+        self._carriers = self._prune(self._carriers, "_igen", igen)
+
+    def _blank_model_card(self) -> None:
+        """Empty the model-card panel (a failed open must not show the PREVIOUS model's provenance
+        next to the new recording's name). ModelCardModel exposes no clear(), so reset it in place."""
+        mc = self._model_card
+        if mc is None:
+            return
+        try:
+            mc.beginResetModel()
+            mc._rows = []
+            mc._card = None
+            mc.endResetModel()
+            mc.cardChanged.emit()
+        except Exception:  # noqa: BLE001 - a panel that won't blank must not block the open
+            pass
+
+    def _set_channel_list(self, handle, modality: str, analyzed: str = "") -> list[str]:
+        """Populate the channel list with the ANALYZED channel FIRST and badged.
+
+        The analyzed channel is the plot's primary lane, the segment inspector's trace and the
+        export's annotation channel — previously the plot/export used ``channel_names[0]`` while
+        inference ran on the modality-matching channel, so a record like ["RESP", "II"] (or any
+        12-lead ECG, whose first channel is "I" but whose preferred channel is "II") was graded on
+        one signal and had the bands drawn over another. ``analyzed=""`` means nothing was graded
+        (a failed open): the channels are listed in file order, none is badged."""
+        names = list(handle.channel_names)
+        if analyzed and analyzed in names:
+            names = [analyzed] + [n for n in names if n != analyzed]
+        units = getattr(handle, "units", {})
+        # Only the first (= analyzed) channel is visible by default, so the plot opens as a single
+        # lane (unchanged look); toggling other channels' eye adds stacked lanes.
+        self._channels.set_channels([
+            ChannelEntry(name=n, modality=modality, unit=units.get(n, ""),
+                         visible=(i == 0), analyzed=bool(analyzed) and n == analyzed)
+            for i, n in enumerate(names)
+        ])
+        return names
+
     @Slot(str)
     def on_recording_opened(self, path: str) -> None:
         info = self._recordings.handle_for(path)
+        self._invalidate(path)                     # FIRST: no early return may skip this
         if info is None:
+            self._inference.report("Recording could not be opened.", "", 0.0)
             return
         handle, modality = info
-        if self._selection is not None and hasattr(self._selection, "clear"):
-            self._selection.clear()
-        if self._guard is not None:
-            self._guard.reset()
         try:
             runner = self._runner(modality)
         except Exception as exc:  # noqa: BLE001
+            # A coherent EMPTY state under the new recording's name: its channels exist but NOTHING
+            # was graded (no analyzed badge, no plot, no segments, no card) — never the previous
+            # recording's analysis wearing this recording's identity.
+            self._set_channel_list(handle, modality)
+            self._inference.setPrecision("")          # nothing is loaded: report unknown, not stale
             self._inference.report(f"Model load failed ({modality}): {exc}", "", 0.0)
             return
         card = runner.card
+        # Read off the graph at load time, so the status bar states the precision it is actually
+        # running rather than the hardcoded "FP32" it used to claim.
+        self._inference.setPrecision(getattr(runner, "precision", ""))
 
         # model-card panel + channel list
         try:
             self._model_card.load(str(self._models_dir / f"{modality}.model_card.json"))
         except Exception:  # noqa: BLE001 - a missing card panel shouldn't block inference
-            pass
-        # Only the first (primary/plot) channel is visible by default, so the plot opens as a
-        # single lane (unchanged look); toggling other channels' eye adds stacked lanes.
-        self._channels.set_channels([
-            ChannelEntry(name=n, modality=modality, unit=getattr(handle, "units", {}).get(n, ""),
-                         visible=(i == 0))
-            for i, n in enumerate(handle.channel_names)
-        ])
+            self._blank_model_card()   # ...but it must never keep showing the PREVIOUS card either
 
         # Heavy work (full-channel read + resample + primary-channel plot cache) goes OFF-THREAD so
         # on_recording_opened returns to the event loop immediately (no freeze). Very long records
@@ -207,16 +323,11 @@ class Coordinator(QObject):
         from biosqa.inference.streaming import LARGE_RECORD_SAMPLES, estimate_analysis_samples
 
         infer_ch = _preferred_channel(handle, modality)
-        plot_ch = handle.channel_names[0]
-        self._current = None
-        self._current_stream = None
-        self._recording_gen += 1
-        self._inference_gen += 1
+        self._plot_channels = self._set_channel_list(handle, modality, infer_ch)
+        # index in the RECORD's own channel order (NOT the re-ordered lane list) — WFDB annotations
+        # are written against the record's signal index.
+        self._analyzed = (path, infer_ch, list(handle.channel_names).index(infer_ch))
         rgen, igen = self._recording_gen, self._inference_gen
-        self._load_carriers = self._prune(self._load_carriers, "_rgen", rgen)
-        self._stream_carriers = self._prune(self._stream_carriers, "_rgen", rgen)
-        self._audit_carriers = self._prune(self._audit_carriers, "_rgen", rgen)
-        self._saliency_carriers = self._prune(self._saliency_carriers, "_rgen", rgen)
         # Treat the threshold as a COMPUTE budget, not a raw sample count: recovery runs a second
         # full inference pass, so it ~doubles the effective work — fold that into the decision so an
         # "almost too big" record with recovery on also takes the streaming path.
@@ -236,9 +347,12 @@ class Coordinator(QObject):
             carrier.failed.connect(self._on_failed)
             self._stream_carriers.append(carrier)
             self._pending[modality] = (time.perf_counter(), 0)
-            self._pool.start(StreamInferenceTask(handle, infer_ch, plot_ch,
-                                                 list(handle.channel_names), modality, runner,
-                                                 overlap, carrier))
+            # A streamed job reads the WHOLE record — a superseded one must stop, not finish.
+            self._pool.start(StreamInferenceTask(handle, infer_ch, infer_ch,
+                                                 list(self._plot_channels), modality, runner,
+                                                 overlap, carrier,
+                                                 refine_enabled=self._refine_enabled(),
+                                                 cancel=self._new_cancel_token()))
             return
         self._inference.report(f"Loading {modality.upper()}…", card.model_version, 0.0)
         carrier = LoadResampleWorkerSignals()
@@ -246,7 +360,7 @@ class Coordinator(QObject):
         carrier.ready.connect(self._on_loaded)
         carrier.failed.connect(self._on_load_failed)
         self._load_carriers.append(carrier)
-        self._pool.start(LoadResampleTask(handle, infer_ch, plot_ch, list(handle.channel_names),
+        self._pool.start(LoadResampleTask(handle, infer_ch, infer_ch, list(self._plot_channels),
                                           float(card.fs_hz), modality, carrier))
 
     @Slot(object)
@@ -295,11 +409,50 @@ class Coordinator(QObject):
             self._guard.reset()   # streaming mode has no guard/recovery report to show
         self._inference.report(message, "", 0.0)
 
+    def _report_if_too_short(self, modality: str, sig, card, overlap: float) -> bool:
+        """True (and the UI says so) when the signal is shorter than ONE model window.
+
+        Such a record yields zero windows, hence zero segments — which the status line rendered as
+        "EDA · 0 segments" and a user reads as "no quality problems were found". It is the opposite:
+        NOTHING was analyzed. ``preprocess.window_starts`` raises ShortRecordError with the exact
+        numbers; we neither depend on that (the length check is our own) nor on it not raising."""
+        n = int(getattr(sig, "size", 0))
+        l_m = int(getattr(card, "l_m", 0) or 0)
+        if n >= max(1, l_m):
+            return False
+        detail = ""
+        try:
+            from biosqa.inference.preprocess import window_starts
+            window_starts(n, card, overlap)
+        except Exception as exc:  # noqa: BLE001 - the message is what we want, not the type
+            detail = str(exc)
+        if not detail:
+            fs = float(getattr(card, "fs_hz", 0.0)) or 1.0
+            detail = (f"record is {n / fs:.1f} s but one {modality} window is "
+                      f"{l_m / fs:.1f} s — nothing was analyzed")
+        self._segments.load_intervals([])
+        self._inference.report(f"{modality.upper()} NOT ANALYSED — {detail}",
+                               getattr(card, "model_version", ""), 0.0)
+        return True
+
+    def _bind_selection_context(self, modality: str) -> int:
+        """Stamp the human-review/export state with the identity of the analysis that just produced
+        these intervals (recording, graded channel, model, segmentation revision). Returns how many
+        reviews were dropped because they belonged to a superseded analysis."""
+        if self._selection is None or not hasattr(self._selection, "set_context"):
+            return 0
+        path, channel, ch_index = self._analyzed or ("", "", -1)
+        runner = self._runners.get(modality)
+        version = runner.card.model_version if runner is not None and runner.card else ""
+        return int(self._selection.set_context(
+            recording=path, channel=channel, channel_index=ch_index,
+            model_version=version, revision=self._inference_gen))
+
     def _start_inference(self, modality: str, sig) -> None:
         """Dispatch sliding-window inference over an already-loaded signal using the CURRENT settings.
         Called on load-complete and again on any analysis-setting change (live re-segment, no re-read)."""
         runner = self._runners.get(modality)
-        if runner is None or runner.card is None or sig is None or getattr(sig, "size", 0) < 1:
+        if runner is None or runner.card is None or sig is None:
             return
         card = runner.card
         window_len_sec = card.l_m / float(card.fs_hz)
@@ -311,10 +464,16 @@ class Coordinator(QObject):
         guard_enabled = bool(getattr(self._settings, "guardEnabled", True)) if self._settings else True
         bsqi_threshold = float(getattr(self._settings, "bsqiThreshold", 0.72)) if self._settings else 0.72
         recovery_enabled = bool(getattr(self._settings, "recoveryEnabled", True)) if self._settings else True
-        refine_enabled = bool(getattr(self._settings, "refineBoundaries", True)) if self._settings else True
+        refine_enabled = self._refine_enabled()
+        if self._report_if_too_short(modality, sig, card, overlap):
+            return
         n_windows = max(0, (sig.size - card.l_m) // stride_samples + 1)
         self._inference_gen += 1
         self._carriers = self._prune(self._carriers, "_igen", self._inference_gen)
+        # CANCEL the superseded run instead of only dropping its result: the generation guard already
+        # made a stale result harmless, but the task itself ran to completion — including a SECOND full
+        # ONNX pass in _recoverability — burning pool threads a dragged slider re-queues N times over.
+        cancel = self._new_cancel_token()
         carrier = InferenceWorkerSignals()
         carrier._igen = self._inference_gen  # type: ignore[attr-defined]
         carrier.intervalsReady.connect(self._on_intervals)
@@ -328,20 +487,25 @@ class Coordinator(QObject):
                                        overlap=overlap, guard_enabled=guard_enabled,
                                        bsqi_threshold=bsqi_threshold,
                                        recovery_enabled=recovery_enabled,
-                                       refine_enabled=refine_enabled))
+                                       refine_enabled=refine_enabled,
+                                       cancel=cancel))
 
     @Slot()
     def _rerun_inference_normal(self) -> None:
-        """Re-segment a NORMAL (in-memory) recording after a guard/recovery/bSQI/refine change. A
-        streamed record disables those features, so this is a no-op there (no wasted re-stream)."""
+        """Re-segment a NORMAL (in-memory) recording after a guard/recovery/bSQI change. A streamed
+        record disables those THREE features, so this is a no-op there (no wasted re-stream).
+        Refinement is NOT one of them — it runs streamed too, so it goes via :meth:`_rerun_inference`."""
         if self._current is not None:
             modality, sig = self._current
             self._start_inference(modality, sig)
 
     @Slot()
     def _rerun_inference(self) -> None:
-        """Re-segment after an OVERLAP change (affects both paths). Normal records reuse the in-memory
-        signal; a streamed record re-streams (keeping the current view — no plot rebuild)."""
+        """Re-segment after an OVERLAP or REFINEMENT change (both affect both paths). Normal records
+        reuse the in-memory signal; a streamed record re-streams (keeping the current view — no plot
+        rebuild). "Refine boundaries" used to be routed to ``_rerun_inference_normal``, which returns
+        immediately when there is no in-memory signal — so the toggle silently did nothing to a
+        streamed record (whose boundaries were never refined in the first place)."""
         if self._current is not None:
             modality, sig = self._current
             self._start_inference(modality, sig)
@@ -361,9 +525,12 @@ class Coordinator(QObject):
             carrier.failed.connect(self._on_failed)
             self._stream_carriers.append(carrier)
             self._pending[modality] = (time.perf_counter(), 0)
-            self._pool.start(StreamInferenceTask(handle, infer_ch, handle.channel_names[0],
-                                                 list(handle.channel_names), modality, runner,
-                                                 overlap, carrier, rebuild_plot=False))
+            self._pool.start(StreamInferenceTask(handle, infer_ch, infer_ch,
+                                                 list(self._plot_channels or handle.channel_names),
+                                                 modality, runner, overlap, carrier,
+                                                 rebuild_plot=False,
+                                                 refine_enabled=self._refine_enabled(),
+                                                 cancel=self._new_cancel_token()))
 
     @Slot(str, str)
     def _on_load_failed(self, modality: str, message: str) -> None:
@@ -375,6 +542,11 @@ class Coordinator(QObject):
     def _on_intervals(self, modality: str, intervals) -> None:
         if self._stale("_igen", self._inference_gen):
             return                                # a newer inference/open superseded this result
+        # Bind the reviews/exports to THIS analysis before the intervals become visible: a re-run
+        # re-segments the recording, so reviews anchored to the previous segmentation are dropped
+        # (they no longer name a real interval) rather than re-anchored to a different span.
+        dropped = self._bind_selection_context(modality) + self._dropped_reviews
+        self._dropped_reviews = 0
         self._segments.load_intervals(intervals)
         t0, n_windows = self._pending.get(modality, (None, 0))
         latency = 0.0
@@ -383,7 +555,10 @@ class Coordinator(QObject):
         runner = self._runners.get(modality)
         version = runner.card.model_version if runner and runner.card else ""
         n = len(list(intervals)) if intervals is not None else 0
-        self._inference.report(f"{modality.upper()} · {n} segments", version, latency)
+        status = f"{modality.upper()} · {n} segments"
+        if dropped:
+            status += (f" · {dropped} review{'s' if dropped != 1 else ''} dropped by re-segmentation")
+        self._inference.report(status, version, latency)
 
     @Slot(str, object)
     def _on_guard(self, modality: str, report) -> None:

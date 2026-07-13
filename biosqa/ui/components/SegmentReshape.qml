@@ -108,8 +108,7 @@ ColumnLayout {
             delegate: Button {
                 id: rcBtn
                 required property string modelData
-                readonly property color tc: (Theme.currentQualityPalette()[modelData]
-                                             || Theme.currentQualityPalette()["Q3"]).color
+                readonly property color tc: Theme.tierInfo(modelData).color
                 Layout.fillWidth: true
                 implicitHeight: 30; padding: 0
                 enabled: root.seg !== null

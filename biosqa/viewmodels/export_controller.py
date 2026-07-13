@@ -10,34 +10,47 @@ for a path -> ``exportToPath(path, fmt)``.
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.parse import unquote, urlparse
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
 
 from biosqa.export.exporters import EXPORTERS, FORMAT_LABELS
 
 
 def _local_path(path_or_url: str) -> str:
-    """Accept a plain path or a QML ``file://`` URL and return a local filesystem path."""
-    if path_or_url.startswith("file:"):
-        return unquote(urlparse(path_or_url).path).lstrip("/") if ":" in path_or_url[7:10] \
-            else unquote(urlparse(path_or_url).path)
-    return path_or_url
+    """Accept a plain path or a QML ``file://`` URL and return a local filesystem path.
+
+    Qt's own converter, not string surgery: the hand-rolled version DROPPED the host of a UNC URL
+    (``file://nas01/quality/run.csv`` -> ``quality/run.csv``), so an export aimed at a network share
+    silently landed on the local disk. Anything that isn't a ``file:`` URL (a plain path) passes
+    through untouched.
+    """
+    url = QUrl(path_or_url)
+    return url.toLocalFile() if url.isLocalFile() else path_or_url
 
 
-def _provenance(model_card) -> dict:
-    """Provenance dict from the ModelCardModel's parsed card (empty if none loaded)."""
+def _provenance(model_card, context=None) -> dict:
+    """Provenance from the ModelCardModel's parsed card + the analysis identity (``context``).
+
+    ``analyzed_channel`` is not decoration: the grades in this file describe ONE channel of the
+    recording, so an export that doesn't name it cannot be checked against the signal it grades.
+    """
+    prov: dict = {}
     card = getattr(model_card, "_card", None) if model_card is not None else None
-    if card is None:
-        return {}
-    return {
-        "modality": card.modality,
-        "model_version": card.model_version,
-        "fs_hz": float(card.fs_hz),
-        "L_m": int(card.l_m),
-        "normalization": card.normalization.method,
-        "training_data_hash": card.training_data_hash,
-    }
+    if card is not None:
+        prov.update({
+            "modality": card.modality,
+            "model_version": card.model_version,
+            "fs_hz": float(card.fs_hz),
+            "L_m": int(card.l_m),
+            "normalization": card.normalization.method,
+            "training_data_hash": card.training_data_hash,
+        })
+    if context is not None and getattr(context, "recording", ""):
+        prov["recording"] = context.recording
+        prov["analyzed_channel"] = context.channel
+        prov["analyzed_channel_index"] = int(context.channel_index)
+        prov["analysis_revision"] = int(context.revision)
+    return prov
 
 
 class ExportController(QObject):
@@ -106,7 +119,8 @@ class ExportController(QObject):
         out = _local_path(path)
         if not out.lower().endswith(ext):
             out += ext
-        prov = _provenance(self._model_card)
+        context = self._analysis_context()
+        prov = _provenance(self._model_card, context)
         if self._guard is not None:                  # record-level acquisition-regime / domain-shift
             prov["domain_shift_index"] = round(float(self._guard.domainShiftIndex), 3)
             prov["regime_flags"] = list(self._guard.regimeFlags)
@@ -115,25 +129,48 @@ class ExportController(QObject):
         # fs; provenance (JSON) keeps the model fs. Fall back to the model fs if no recording fs.
         native_fs = float(getattr(self._recordings, "currentFsHz", 0.0) or 0.0) if self._recordings else 0.0
         fs = native_fs or prov.get("fs_hz")
+        # WFDB annotations name a signal INDEX; grade the analyzed channel, not channel 0 (they are
+        # not the same channel on e.g. ["RESP", "II"] or any 12-lead ECG). The flat tables
+        # (csv/tsv/parquet/mat) name it by NAME, per row — they carry no provenance block, so without
+        # it the grades in the file that feeds downstream analysis don't say which signal they grade.
+        chan = int(getattr(context, "channel_index", -1)) if context is not None else -1
+        chan_name = str(getattr(context, "channel", "") or "") if context is not None else ""
         try:
             written = writer(intervals, out, overridden=overridden, notes=notes,
-                             corrected=corrected, provenance=prov, fs=fs)
+                             corrected=corrected, provenance=prov, fs=fs,
+                             inference_channel=max(0, chan), channel=chan_name)
         except Exception as exc:  # noqa: BLE001
             self.exportFailed.emit(str(exc))
             return
         self.exportSucceeded.emit(str(written))
 
+    def _analysis_context(self):
+        """The (recording, graded channel, model, revision) identity of what is currently on screen.
+        Owned by the SelectionController (which scopes the human reviews to it); ``None`` when
+        nothing has been analyzed."""
+        getter = getattr(self._selection, "analysis_context", None) if self._selection else None
+        try:
+            return getter() if callable(getter) else None
+        except Exception:  # noqa: BLE001
+            return None
+
     def _collect_overrides(self, intervals) -> tuple[dict, dict, dict]:
         """Map the human reviews onto interval positions: ``overridden`` (bool), ``notes`` (text),
         and ``corrected`` (the reviewer's NEW tier). Keeping ``corrected`` separate is the fix for
-        the relabel-loses-the-tier bug — the writer applies it as the effective exported grade."""
+        the relabel-loses-the-tier bug — the writer applies it as the effective exported grade.
+
+        Matched on the FULL (start, end) span, not the start alone: a start time is not an identity
+        (every recording has an interval at 0.0), and ``collected_overrides`` is already scoped to
+        the current recording/channel/model/revision — a review can only ever land on the exact
+        interval it was made against."""
         overridden: dict[int, bool] = {}
         notes: dict[int, str] = {}
         corrected: dict[int, str] = {}
         if self._selection is not None:
-            by_start = {round(iv.start_sec, 3): i for i, iv in enumerate(intervals)}
-            for start, _end, _orig, new_tier, note in self._selection.collected_overrides():
-                i = by_start.get(round(start, 3))
+            by_span = {(round(iv.start_sec, 3), round(iv.end_sec, 3)): i
+                       for i, iv in enumerate(intervals)}
+            for start, end, _orig, new_tier, note in self._selection.collected_overrides():
+                i = by_span.get((round(start, 3), round(end, 3)))
                 if i is None:
                     continue
                 if new_tier:

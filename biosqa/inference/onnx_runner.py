@@ -9,12 +9,13 @@ silently mis-predict.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from biosqa.inference.preprocess import make_windows, normalize_window
+from biosqa.inference.preprocess import make_windows, normalize_window, window_starts
 from biosqa.model.model_card import (
     Head,
     ModelCard,
@@ -27,6 +28,34 @@ try:
     import onnxruntime as ort
 except ImportError:  # pragma: no cover - onnxruntime is a required app dep; guarded for import-time safety
     ort = None  # type: ignore[assignment]
+
+# Windows per session.run. Bounds peak memory instead of letting it scale with record
+# length: at 0.9 overlap a multi-hour ECG is tens of thousands of windows, and the
+# float64 STFT workspace behind the dual-branch spectral input is ~40x the window stack
+# itself, so an uncapped batch peaks in the GBs. Every op on this path is elementwise
+# over the batch axis, so chunking is exact, not an approximation (see _run_raw).
+_MAX_BATCH = 256
+
+#: op types that only exist in an INT8-quantized graph. ORT's session API cannot report weight
+#: dtypes, and the `onnx` package is deliberately not an app dependency -- but an op type is stored
+#: verbatim in the serialized graph, so reading it off the artifact needs neither. Observing the file
+#: also beats trusting a label: the status bar used to hardcode "FP32", which was true only by luck.
+_INT8_OPS = (
+    b"QLinearMatMul", b"QLinearConv", b"MatMulInteger", b"ConvInteger", b"DynamicQuantizeLinear",
+)
+
+
+def _graph_precision(onnx_path: Path) -> str:
+    """The loaded graph's numeric precision, read off the artifact itself ("FP32"/"INT8").
+
+    Returns "" if the file cannot be read: unknown is reported as unknown, never guessed. The UI
+    omits the precision clause on "" rather than showing a plausible default.
+    """
+    try:
+        blob = Path(onnx_path).read_bytes()
+    except OSError:
+        return ""
+    return "INT8" if any(op in blob for op in _INT8_OPS) else "FP32"
 
 
 def _softmax(logits: np.ndarray) -> np.ndarray:
@@ -72,15 +101,14 @@ class MultiHeadPrediction:
 class OnnxRunner:
     """Loads and runs one modality's ONNX quality model.
 
-    TODO(Plan2 §7.2): batch windows instead of looping one-at-a-time once a
-    real model is available to benchmark against; this skeleton favors
-    clarity over throughput.
+    Inference is batched in slices of ``_MAX_BATCH`` windows (Plan 2 §7.2).
     """
 
     def __init__(self, modality: str, models_dir: str | Path):
         self.modality = modality
         self.models_dir = Path(models_dir)
         self.card: ModelCard | None = None
+        self.precision: str = ""          # "FP32"/"INT8", read off the graph at load(); "" until then
         self._session: "ort.InferenceSession | None" = None
         self._input_name: str | None = None
         self._spec_input_name: str | None = None  # 2nd input for dual-branch models (spectral channels)
@@ -111,7 +139,22 @@ class OnnxRunner:
                 f"{card_path}: card modality {self.card.modality!r} != runner modality {self.modality!r} "
                 f"— the filename and the card disagree on the signal type"
             )
-        self._session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+        # Model identity is otherwise a free-text label: a swapped or corrupted .onnx would load happily
+        # as long as the card said the right words. No-op for a card carrying no digest; hard failure on
+        # a mismatch. Refuse to run rather than predict from an unknown model.
+        self.card.verify_onnx(onnx_path)
+        self.precision = _graph_precision(onnx_path)
+
+        # ORT defaults intra_op to the core count. The app runs inference on a shared QThreadPool
+        # alongside interactive work (saliency, channel caching), so an unbudgeted session starves the
+        # UI on exactly the large records that take longest. Leave the machine room to stay responsive.
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = max(1, (os.cpu_count() or 4) // 2)
+        opts.inter_op_num_threads = 1
+        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        self._session = ort.InferenceSession(
+            str(onnx_path), sess_options=opts, providers=["CPUExecutionProvider"]
+        )
 
         inputs = self._session.get_inputs()
         input_meta = inputs[0]
@@ -199,14 +242,29 @@ class OnnxRunner:
             )
 
     def _run_raw(self, windows: np.ndarray) -> list[np.ndarray]:
-        """Run all ONNX outputs once over a ``[n_windows, L_m]`` batch.
+        """Run all ONNX outputs over a ``[n_windows, L_m]`` batch, in slices of ``_MAX_BATCH``.
 
-        Returns the raw output tensors in graph order. Batches the whole window
-        stack in a single ``session.run`` (the exported batch dim is dynamic).
+        Returns the raw output tensors in graph order, each concatenated along the batch
+        axis. Every op on this path (the host-side spectral/SQI packs and the ONNX forward,
+        whose exported batch dim is dynamic) is independent across the batch axis, so the
+        chunked result is identical to one big ``session.run`` -- bit for bit, not
+        approximately -- while peak memory stays bounded by ``_MAX_BATCH``.
         """
         if self._session is None or self.card is None or self._input_name is None:
             raise RuntimeError("OnnxRunner.load() must be called before inference")
         batch = np.asarray(windows, dtype=np.float32).reshape(-1, 1, self.card.l_m)
+        if len(batch) <= _MAX_BATCH:
+            return self._run_batch(batch)
+        chunks = [self._run_batch(batch[i:i + _MAX_BATCH]) for i in range(0, len(batch), _MAX_BATCH)]
+        return [np.concatenate([c[k] for c in chunks], axis=0) for k in range(len(chunks[0]))]
+
+    def _run_batch(self, batch: np.ndarray) -> list[np.ndarray]:
+        """One ``session.run`` over at most ``_MAX_BATCH`` windows ``[b, 1, L_m]``.
+
+        Computes the model's 2nd input (spectral channels / SQI feature vector) for this
+        slice only -- both are elementwise over the batch axis, so a per-chunk call gives
+        the same values a whole-stack call would.
+        """
         if self._feat_input_name is not None:
             # 2-input fusion: compute the SQI feature VECTOR host-side from the raw window.
             # The features are scale-invariant and the graph bakes their standardization, so
@@ -311,6 +369,21 @@ class OnnxRunner:
         primary = self.card.primary_head
         raw = np.asarray(outs[self._output_index[primary.output_name]], dtype=np.float32)
         return _activate(primary, raw)[0]
+
+    def window_starts_sec(self, signal: np.ndarray, overlap: float = 0.0) -> np.ndarray:
+        """START TIME (seconds) of every window :meth:`run_sliding_window` / ``_multihead`` scores.
+
+        Same :func:`preprocess.window_starts` grid ``make_windows`` slices on, so element ``i`` is the
+        true start of the window whose grade is at index ``i`` of the prediction. The grid is NOT
+        uniform: when the record is not a whole number of windows the final window is END-ANCHORED at
+        ``n - L_m`` so the tail is graded. Segmentation must bound its intervals on THESE times, not on
+        ``i * stride`` -- otherwise the tail window's grade is attributed to a span running past the end
+        of the recording (by up to one stride, i.e. 60 s for EDA at overlap 0).
+        """
+        if self.card is None:
+            raise RuntimeError("OnnxRunner.load() must be called before window_starts_sec()")
+        starts = window_starts(int(np.asarray(signal).shape[0]), self.card, overlap)
+        return starts.astype(np.float64) / float(self.card.fs_hz)
 
     def _normalized_windows(self, signal: np.ndarray, overlap: float) -> np.ndarray:
         """Window a full-length signal and apply the card's normalization."""
