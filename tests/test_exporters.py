@@ -1,6 +1,7 @@
 """Round-trip tests for the quality-interval exporters (csv/tsv/json/parquet/wfdb/mat)."""
 import csv
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -215,11 +216,21 @@ def test_local_path_over_url_forms(tmp_path):
     an export aimed at \\\\nas01\\quality landed on the local disk instead of the network share."""
     from biosqa.viewmodels.export_controller import _local_path
 
-    assert _local_path("file:///C:/exports/run1.csv") == "C:/exports/run1.csv"
+    # THE bug this guards. Qt encodes a URL host in the //server/share form on EVERY platform, so this
+    # is the one assertion that must hold everywhere.
     assert _local_path("file://nas01/quality/exports/run1.csv") == "//nas01/quality/exports/run1.csv"
-    assert _local_path("file:///C:/exports/my%20run.csv") == "C:/exports/my run.csv"
+
+    assert _local_path("file:///srv/exports/my%20run.csv") == "/srv/exports/my run.csv"   # percent-decoded
     assert _local_path(r"C:\exports\run1.csv") == r"C:\exports\run1.csv"      # plain path: untouched
     assert _local_path("/srv/exports/run1.csv") == "/srv/exports/run1.csv"
+
+    # Drive letters are a WINDOWS concept, and Qt's leading-slash strip for them is #ifdef Q_OS_WIN
+    # (qurl.cpp). On POSIX "file:///C:/x" legitimately denotes a path *named* "/C:/x", so asserting the
+    # Windows form unconditionally asserts the platform rather than the behaviour -- which is exactly
+    # how this test broke CI on ubuntu while passing locally.
+    if sys.platform == "win32":
+        assert _local_path("file:///C:/exports/run1.csv") == "C:/exports/run1.csv"
+        assert _local_path("file:///C:/exports/my%20run.csv") == "C:/exports/my run.csv"
 
 
 def test_wfdb_annotates_the_analyzed_channel(tmp_path):
