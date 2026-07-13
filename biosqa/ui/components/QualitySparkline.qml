@@ -25,6 +25,10 @@ Item {
         onCbPalChanged: requestPaint()
         readonly property real rr: root.radius
         onRrChanged: requestPaint()
+        // A Canvas clears its backing store on resize without re-emitting paint, so the ribbon went
+        // blank whenever its row was re-laid out (channel list, segment cards, responsive grid).
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
         onPaint: {
             var ctx = getContext("2d")
             ctx.reset()

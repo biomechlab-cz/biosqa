@@ -41,6 +41,10 @@ ColumnLayout {
             // onPaint, so without this the ring keeps stale tier colors until fractions next change.
             property bool cbPal: Theme.useColorBlindPalette
             onCbPalChanged: requestPaint()
+            // ... and on resize, for the same reason: the Canvas clears its backing store but does not
+            // re-emit paint, so the ring vanished when the responsive overview grid reflowed it.
+            onWidthChanged: requestPaint()
+            onHeightChanged: requestPaint()
             onPaint: {
                 var ctx = getContext("2d")
                 ctx.reset()
