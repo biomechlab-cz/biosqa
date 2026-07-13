@@ -7,7 +7,7 @@ After inference, BioSQA Studio turns the recording's per-window grades into a co
 
 ## A table of contents by quality
 
-Inference produces an ordinal grade (Q0–Q3) for each analysis window. Rather than leave you scrolling through thousands of windows, the app **collapses contiguous windows of the same grade into run-length segments** — one row per stretch of consistent quality. The segmentation view is that collapsed structure: a **table of contents for the recording, organized by quality**.
+Inference produces an ordinal grade (Q0–Q3) for each analysis window. Rather than leave you scrolling through thousands of windows, the app **collapses contiguous windows of the same grade into run-length segments** — one row per span of consistent quality. The segmentation view is that collapsed structure: a **table of contents for the recording, organized by quality**.
 
 Each segment carries a time range and its tier, so you can read a whole session's quality profile at a glance and navigate straight to the parts that matter. Grades are ordinal — Q0 unacceptable (⊘), Q1 poor (⚠), Q2 acceptable (✓), Q3 excellent (✓) — with **"usable" meaning Q2+Q3**. See [Quality scale](/biosqa/docs/quality-scale/) for the full grade definitions.
 
@@ -29,7 +29,7 @@ Numeric fields are set in **monospace** so columns align and scan cleanly. The l
 
 ## Grid view
 
-The **Grid view** presents the same segments as clickable **card thumbnails**. Each card renders a **mini-waveform drawn from the segment's real samples**, alongside the same tier badge, confidence, and artifact tags as the table. This makes it easy to visually recognize the shape of a dropout, a saturation, or a clean stretch without opening each one.
+The **Grid view** presents the same segments as clickable **card thumbnails**. Each card renders a **mini-waveform drawn from the segment's real samples**, alongside the same tier badge, confidence, and artifact tags as the table. This makes it easy to visually recognize the morphology of a dropout, a saturation, or a clean segment without opening each one.
 
 Clicking a card selects that segment. The **Table/Grid choice is remembered across runs**, so the app reopens in whichever view you last used.
 

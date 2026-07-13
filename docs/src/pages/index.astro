@@ -57,8 +57,8 @@ const cardJson = `{
     <div class="container hero-grid">
       <div class="hero-copy">
         <span class="eyebrow"><span class="eyebrow-dot"></span>Alpha · on-device SQA</span>
-        <h1>See which stretches of a recording you can <span class="accent">trust</span>.</h1>
-        <p class="lede">See which stretches of an ECG / PPG / EEG / EDA recording you can trust — on-device, no cloud.</p>
+        <h1>See which segments of a recording you can <span class="accent">trust</span>.</h1>
+        <p class="lede">Ordinal signal-quality assessment for ECG, PPG, EEG and EDA — graded window by window, on-device, no cloud.</p>
         <p class="subline muted">Detects the modality, runs a compact neural quality model over a sliding window entirely on the CPU, and paints contiguous Q0–Q3 quality segments right on the trace.</p>
         <div class="cta">
           <a class="btn btn-primary" href="#install">Get started</a>
@@ -86,7 +86,7 @@ const cardJson = `{
   <section class="trust">
     <div class="container trust-grid">
       <div>
-        <p class="trust-p"><strong>BioSQA Studio opens a biosignal recording, detects its modality, and scores it on the CPU</strong> <span class="text-2">— overlaying contiguous quality segments so corrupted stretches are obvious at a glance, with editable segmentation, review notes, and standard-format export.</span></p>
+        <p class="trust-p"><strong>BioSQA Studio opens a biosignal recording, detects its modality, and scores it on the CPU</strong> <span class="text-2">— overlaying contiguous quality segments so artifact-corrupted regions are obvious at a glance, with editable segmentation, review notes, and standard-format export.</span></p>
         <p class="mono trust-build">Built with PySide6 (Qt 6) + QML · inference via ONNX Runtime on CPU · MIT licensed</p>
       </div>
       <div class="callout callout-warn">
@@ -159,15 +159,34 @@ const cardJson = `{
     <div class="container">
       <div class="microlabel" data-reveal>The interface</div>
       <h2 data-reveal>A working instrument beats any illustration.</h2>
-      <div class="shot shot-primary" role="img" aria-label="The BioSQA Studio workspace: a waveform with run-length Q0–Q3 quality bands and a right-hand AI Quality Inspector." data-reveal>
+      <div class="shot shot-primary" data-reveal>
         <div class="shot-bar"><span class="dot" style="background:var(--status-red)"></span><span class="dot" style="background:var(--q1)"></span><span class="dot" style="background:var(--q3)"></span><span class="mono shot-name">BioSQA Studio — workspace</span></div>
-        <div class="shot-body ar-169"><span class="mono muted">[ primary workspace · 16:9 ]</span></div>
+        <img
+          class="shot-img ar-169"
+          src={withBase('shots/workspace.png')}
+          width="1920" height="1080"
+          loading="lazy" decoding="async"
+          alt="The BioSQA Studio workspace. A 3-minute ECG trace is overlaid with translucent run-length quality bands — green where the model graded Q3, amber Q1, red Q0 — aligned with visible bursts of artifact. The right-hand AI Quality Inspector lists all ten segments with their grades, confidences and detected artifact types."
+        />
       </div>
       <div class="shot-row">
-        {['Overview dashboard', 'Segmentation table & grid', 'Segment inspector'].map((c) => (
-          <div class="shot" role="img" aria-label={`BioSQA Studio ${c}.`} data-reveal>
-            <div class="shot-body ar-43"><span class="mono muted">[ {c} · 4:3 ]</span></div>
-            <div class="shot-cap mono muted">{c}</div>
+        {[
+          { f: 'overview.png', c: 'Overview dashboard',
+            a: 'The recording overview: duration, percent usable, segment count and flagged-Q0 tiles above a quality-distribution donut, a per-modality quality-ribbon timeline, an artifact-type histogram, and the loaded model card.' },
+          { f: 'segmentation.png', c: 'Segmentation grid',
+            a: 'The quality-segmentation view: a run-length track across the full recording, with each segment as a card showing its real mini-waveform, tier badge, confidence and artifact tags.' },
+          { f: 'inspector.png', c: 'Segment inspector',
+            a: 'The segment inspector on a Q0 segment: the corrupted waveform, reshape controls, the AI rationale at 100 percent confidence, detected artifact types including muscle EMG, and the human-in-the-loop panel showing the model grade against an unreviewed decision.' },
+        ].map((s) => (
+          <div class="shot" data-reveal>
+            <img
+              class="shot-img ar-43"
+              src={withBase(`shots/${s.f}`)}
+              width="1280" height="960"
+              loading="lazy" decoding="async"
+              alt={s.a}
+            />
+            <div class="shot-cap mono muted">{s.c}</div>
           </div>
         ))}
       </div>
@@ -332,6 +351,10 @@ const cardJson = `{
   .shot-bar .dot { width: 9px; height: 9px; border-radius: 50%; }
   .shot-name { margin-left: 8px; font-size: 11px; color: var(--text-muted); }
   .shot-body { display: grid; place-items: center; background: repeating-linear-gradient(45deg, var(--surface-alt) 0 11px, var(--surface-rail) 11px 22px); }
+  /* The screenshots are captured at exactly these ratios (tools/capture_shots.py), so object-fit
+     never actually crops -- aspect-ratio is here to reserve the box and stop layout shift while
+     the lazy image decodes. */
+  .shot-img { display: block; width: 100%; height: auto; object-fit: cover; background: var(--surface-alt); }
   .ar-169 { aspect-ratio: 16/9; } .ar-43 { aspect-ratio: 4/3; }
   .shot-cap { padding: 9px 12px; font-size: 11px; border-top: 1px solid var(--border); }
   .shot-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }

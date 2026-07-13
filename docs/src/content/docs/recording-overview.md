@@ -29,7 +29,7 @@ A **donut** renders the Q0..Q3 tier fractions as a ring. Each arc carries both *
 
 ## Per-modality timeline & artifact bars
 
-For each modality present, the overview shows a **quality-ribbon timeline** — a compressed strip that colors the recording by grade across its full duration, so you can see whether poor quality is a brief burst or a sustained stretch.
+For each modality present, the overview shows a **quality-ribbon timeline** — a compressed strip that colors the recording by grade across its full duration, so you can see whether poor quality is a transient artifact burst or sustained degradation across the record.
 
 Alongside it, **artifact-type bars** summarise which artifact classes dominate the recording. Where the timeline tells you *when* quality drops, the artifact bars tell you *what kind* of corruption is responsible.
 

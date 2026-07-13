@@ -16,7 +16,7 @@ The scale is **ordinal**: higher grades support more downstream analysis. "**Usa
 | **Q1** | Poor | ⚠ | Partially corrupted; use with caveats |
 | **Q0** | Unacceptable | ⊘ | Dominated by artifact; discard |
 
-The grade tells you what a segment is *good enough for*, not just whether it is "clean." A Q2 stretch of ECG is fine for a heart-rate estimate but not for beat-morphology work; a Q0 stretch should be dropped from analysis entirely.
+The grade tells you what a segment is *good enough for*, not just whether it is "clean." A Q2 segment of ECG is fine for a heart-rate estimate but not for beat-morphology work; a Q0 segment should be dropped from analysis entirely.
 
 ## Ordinal, not binary
 

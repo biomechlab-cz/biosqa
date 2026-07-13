@@ -50,7 +50,7 @@ The activity rail on the left switches between full-bleed views:
 1. **Open** `dummy_data/test_ecg_3min.hea` (or drop in your own recording). It opens instantly — only the header is read.
 2. The modality is **detected** and the matching model loads automatically.
 3. Inference runs and the trace is painted with **Q0–Q3 quality bands**.
-4. Click **Jump to next poor region** to step through the corrupted stretches, or select any segment to inspect it.
+4. Click **Jump to next poor region** to step through the artifact-corrupted segments, or select any segment to inspect it.
 5. **Export** the segments (CSV/TSV/JSON/Parquet/WFDB/.mat) once you're happy.
 
 ## Frozen build

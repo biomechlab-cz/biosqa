@@ -124,6 +124,7 @@ Item {
     // bands carry no mouse interaction here, so there is no hit-testing to preserve.
     Canvas {
         id: bandsLayer
+        objectName: "qualityBands"        // tests/test_qml_render.py locates this to sample real pixels
         anchors.fill: parent
         readonly property var bands: segments.segmentBands
         readonly property real totalDur: segments.totalDurationSec
@@ -135,6 +136,12 @@ Item {
         onVsChanged: requestPaint()
         onVeChanged: requestPaint()
         onCbPalChanged: requestPaint()
+        // A Canvas CLEARS its backing store when it is resized but does NOT re-emit paint. The
+        // Repeater of Rectangles this replaced re-bound x/width for free, so nothing here did --
+        // and the bands silently vanished on every window resize until some other property
+        // happened to change. Geometry is a paint dependency like any other.
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
         onPaint: {
             var ctx = getContext("2d")
             ctx.reset()
@@ -147,7 +154,11 @@ Item {
                 var s1 = (bs[i].start + bs[i].width) * dur
                 if (s1 < bandsLayer.vs || s0 > bandsLayer.ve)
                     continue
-                var c = Theme.tierInfo(bs[i].tier).color
+                // Qt.color(): tierInfo().color is a STRING ("#2FBF71"), and a string has no .r/.g/.b.
+                // Everywhere else that needs the components binds it to a `property color`, which QML
+                // converts for you -- but this is raw Canvas JS, so Qt.rgba(undefined,...) silently
+                // produced an invalid brush and the bands painted NOTHING. Convert explicitly.
+                var c = Qt.color(Theme.tierInfo(bs[i].tier).color)
                 var xa = root.xForSec(s0)
                 ctx.fillStyle = Qt.rgba(c.r, c.g, c.b, 0.15)
                 ctx.fillRect(xa, 0, Math.max(1, root.xForSec(s1) - xa), height)
