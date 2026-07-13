@@ -119,6 +119,14 @@ Rectangle {
                 ToolTip.visible: hovered
                 ToolTip.text: modelData.label
                 ToolTip.delay: 400
+
+                // The rail is icon-only (Canvas glyphs), so without these a screen reader
+                // announces four unnamed buttons.
+                Accessible.role: Accessible.Button
+                Accessible.name: navBtn.modelData.label
+                Accessible.checkable: true
+                Accessible.checked: navBtn.checked
+                Accessible.onPressAction: root.navigate(navBtn.modelData.view)
             }
         }
     }
@@ -166,5 +174,9 @@ Rectangle {
         ToolTip.visible: hovered
         ToolTip.text: "Settings"
         ToolTip.delay: 400
+
+        Accessible.role: Accessible.Button
+        Accessible.name: "Settings"
+        Accessible.onPressAction: root.settingsRequested()
     }
 }

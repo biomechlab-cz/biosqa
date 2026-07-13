@@ -6,6 +6,11 @@ import "../components"
 // design spec (a)/(c): glass hover tooltip -- "time, value, and the window's
 // quality + confidence" (Plan 2 §8.2). Cheap flat-translucent panel (design
 // spec (c): "prefer the cheap version over the plot area").
+//
+// The tier/confidence row renders ONLY when `hasQuality` is set, i.e. when a real
+// graded segment sits under the cursor. It used to default to "Q1 / 71% conf" and
+// the caller never cleared it, so hovering ungraded time (before inference, or over
+// a gap) showed a grade for a segment that does not exist.
 Rectangle {
     id: root
     width: 196
@@ -15,14 +20,20 @@ Rectangle {
     border.color: Theme.glassBorder
     border.width: 1
 
-    property string timeText: "00:45:14.320"
-    property string valueText: "+0.842 mV"
-    property string windowText: "#3,182"
-    property string qualityTier: "Q1"
-    property real confidence: 0.71
+    property string timeText: ""
+    property string valueText: ""
+    property string windowText: ""
+    property bool hasQuality: false
+    property string qualityTier: ""
+    property real confidence: 0
 
-    readonly property var _p: (Theme.currentQualityPalette()[qualityTier]
-                               || Theme.currentQualityPalette()["Q3"])
+    readonly property var _p: Theme.tierInfo(qualityTier)
+
+    function clearQuality() {
+        root.hasQuality = false
+        root.qualityTier = ""
+        root.confidence = 0
+    }
 
     ColumnLayout {
         id: col
@@ -77,6 +88,7 @@ Rectangle {
         }
 
         RowLayout {
+            visible: root.hasQuality
             Layout.fillWidth: true
             spacing: 6
             TierChip {
@@ -97,6 +109,15 @@ Rectangle {
                 font.family: Theme.fontMono
                 font.pixelSize: 10
             }
+        }
+
+        Text {
+            visible: !root.hasQuality
+            Layout.fillWidth: true
+            text: "Not graded"
+            color: Theme.textMuted
+            font.family: Theme.fontUi
+            font.pixelSize: 10
         }
     }
 }

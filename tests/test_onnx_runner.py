@@ -17,7 +17,8 @@ onnx = pytest.importorskip("onnx")
 pytest.importorskip("onnxruntime")
 from onnx import TensorProto, helper, numpy_helper  # noqa: E402
 
-from biosqa.inference.onnx_runner import OnnxRunner, _softmax  # noqa: E402
+from biosqa.inference import onnx_runner as onnx_runner_mod  # noqa: E402
+from biosqa.inference.onnx_runner import _MAX_BATCH, OnnxRunner, _softmax  # noqa: E402
 from biosqa.model.model_card import ModelCardError  # noqa: E402
 
 L = 8  # tiny window length for the test graph == card L_m
@@ -133,3 +134,126 @@ def test_legacy_single_output_model_still_runs(tmp_path):
     pred = runner.predict_windows_multihead(windows)
     assert set(pred.per_head) == {"grade"}
     assert np.allclose(pred.per_head["grade"].sum(axis=1), 1.0, atol=1e-5)
+
+
+# --------------------------------------------------------------- batch cap (Plan 2 §7.2)
+# An uncapped batch peaks in the GBs on a long record at 0.9 overlap (the window stack plus
+# the float64 STFT workspace behind the spectral branch). _run_raw slices it; the slicing
+# must be EXACT, so these compare against the pre-cap behaviour (one session.run) bit for bit.
+
+SPEC_L = 64  # long enough that the STFT lands >1 frame and exercises the interp-to-L path
+SPEC_CARD = {
+    **VALID_CARD,
+    "L_m": SPEC_L,
+    "heads": V2_HEADS,
+    "spectral_preprocessing": {"bands_hz": [[15, 50], [50, 110]], "frame_s": 0.05, "hop_s": 0.02},
+}
+
+
+def _build_dual_onnx(path, outputs, length, n_bands):
+    """Dual-branch graph (the 2-input ECG contract): x_raw [B,1,L] + x_spec [B,C,L].
+
+    Flattens both inputs and sums a MatMul of each, so every head's output depends on
+    BOTH branches -- a mis-sliced spectral branch would change the result rather than
+    being masked by a raw-only path.
+    """
+    rng = np.random.default_rng(4)
+    raw = helper.make_tensor_value_info("window", TensorProto.FLOAT, ["batch", 1, length])
+    spec = helper.make_tensor_value_info("spec", TensorProto.FLOAT, ["batch", n_bands, length])
+    nodes = [helper.make_node("Flatten", ["window"], ["flat"], axis=1),
+             helper.make_node("Flatten", ["spec"], ["sflat"], axis=1)]
+    inits, value_infos = [], []
+    for name, dim in outputs:
+        w_raw, w_spec = f"Wr_{name}", f"Ws_{name}"
+        inits.append(numpy_helper.from_array(rng.standard_normal((length, dim)).astype(np.float32), w_raw))
+        inits.append(numpy_helper.from_array(
+            rng.standard_normal((n_bands * length, dim)).astype(np.float32), w_spec))
+        nodes.append(helper.make_node("MatMul", ["flat", w_raw], [f"{name}_r"]))
+        nodes.append(helper.make_node("MatMul", ["sflat", w_spec], [f"{name}_s"]))
+        nodes.append(helper.make_node("Add", [f"{name}_r", f"{name}_s"], [name]))
+        value_infos.append(helper.make_tensor_value_info(name, TensorProto.FLOAT, ["batch", dim]))
+    graph = helper.make_graph(nodes, "dualbranch", [raw, spec], value_infos, initializer=inits)
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    onnx.checker.check_model(model)
+    onnx.save(model, str(path))
+
+
+def _spec_runner(tmp_path):
+    (tmp_path / "ecg.model_card.json").write_text(json.dumps(SPEC_CARD))
+    _build_dual_onnx(tmp_path / "ecg.onnx", _v2_outputs(), SPEC_L,
+                     len(SPEC_CARD["spectral_preprocessing"]["bands_hz"]))
+    runner = OnnxRunner("ecg", tmp_path)
+    runner.load()
+    return runner
+
+
+def _ragged_n():
+    """More than two full chunks, with a partial tail (the case that catches an
+    off-by-one slice or a dropped remainder)."""
+    return 2 * _MAX_BATCH + 37
+
+
+def _assert_chunking_is_exact(runner, windows, monkeypatch):
+    """predict_windows / predict_windows_multihead under the cap == one unchunked run."""
+    monkeypatch.setattr(onnx_runner_mod, "_MAX_BATCH", len(windows) + 1)  # pre-cap: single session.run
+    ref_raw = runner.predict_windows(windows)
+    ref_heads = {k: v.copy() for k, v in runner.predict_windows_multihead(windows).per_head.items()}
+    monkeypatch.undo()
+
+    got_raw = runner.predict_windows(windows)
+    got_heads = runner.predict_windows_multihead(windows).per_head
+    assert got_raw.shape == (len(windows), 4)
+    np.testing.assert_array_equal(got_raw, ref_raw)
+    assert set(got_heads) == set(ref_heads)
+    for name, ref in ref_heads.items():
+        np.testing.assert_array_equal(got_heads[name], ref)
+
+
+def test_chunked_run_is_bit_exact_plain_card(tmp_path, monkeypatch):
+    runner = _runner(tmp_path, {**VALID_CARD, "heads": V2_HEADS}, _v2_outputs())
+    windows = np.random.default_rng(11).standard_normal((_ragged_n(), L)).astype(np.float32)
+    _assert_chunking_is_exact(runner, windows, monkeypatch)
+
+
+def test_chunked_run_is_bit_exact_spectral_card(tmp_path, monkeypatch):
+    # The dual-branch path recomputes the host-side spectral channels PER CHUNK;
+    # spectral_band_channels is elementwise over the batch axis, so that must be exact too.
+    runner = _spec_runner(tmp_path)
+    windows = np.random.default_rng(12).standard_normal((_ragged_n(), SPEC_L)).astype(np.float32)
+    _assert_chunking_is_exact(runner, windows, monkeypatch)
+
+
+class _SpySession:
+    """Records the batch size of every session.run (the thing the cap bounds)."""
+
+    def __init__(self, session, sizes):
+        self._session = session
+        self._sizes = sizes
+
+    def run(self, output_names, feed):
+        self._sizes.append(len(next(iter(feed.values()))))
+        return self._session.run(output_names, feed)
+
+
+def test_batch_is_capped_at_max_batch(tmp_path):
+    runner = _runner(tmp_path, {**VALID_CARD, "heads": V2_HEADS}, _v2_outputs())
+    n = _ragged_n()
+    windows = np.random.default_rng(13).standard_normal((n, L)).astype(np.float32)
+    sizes = []
+    runner._session = _SpySession(runner._session, sizes)
+
+    runner.predict_windows(windows)
+    # never more than _MAX_BATCH windows resident in one run, and none dropped
+    assert sizes == [_MAX_BATCH, _MAX_BATCH, 37]
+    assert sum(sizes) == n
+
+
+def test_short_stack_still_runs_in_one_batch(tmp_path):
+    # At or below the cap the driver must not add a concatenate round-trip.
+    runner = _runner(tmp_path, {**VALID_CARD, "heads": V2_HEADS}, _v2_outputs())
+    windows = np.random.default_rng(14).standard_normal((_MAX_BATCH, L)).astype(np.float32)
+    sizes = []
+    runner._session = _SpySession(runner._session, sizes)
+
+    assert runner.predict_windows(windows).shape == (_MAX_BATCH, 4)
+    assert sizes == [_MAX_BATCH]

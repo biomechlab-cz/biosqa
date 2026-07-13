@@ -95,13 +95,38 @@ Rectangle {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 1
-                        Label {
-                            text: model.name
-                            color: model.channelVisible ? Theme.textPrimary : Theme.textMuted
-                            font.family: Theme.fontMono
-                            font.pixelSize: 12
-                            elide: Text.ElideRight
+                        RowLayout {
                             Layout.fillWidth: true
+                            spacing: 5
+                            Label {
+                                text: model.name
+                                color: model.channelVisible ? Theme.textPrimary : Theme.textMuted
+                                font.family: Theme.fontMono
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            // the channel inference actually GRADED: the quality bands, segments and
+                            // exports describe THIS channel, not whichever one is first in the file.
+                            Rectangle {
+                                visible: model.analyzed
+                                implicitWidth: gradedText.implicitWidth + 10
+                                implicitHeight: 14
+                                radius: 3
+                                color: Qt.rgba(chRow.modC.r, chRow.modC.g, chRow.modC.b, 0.18)
+                                border.width: 1
+                                border.color: chRow.modC
+                                Label {
+                                    id: gradedText
+                                    anchors.centerIn: parent
+                                    text: "GRADED"
+                                    color: chRow.modC
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 8
+                                    font.weight: Font.DemiBold
+                                    font.letterSpacing: 0.6
+                                }
+                            }
                         }
                         Label {
                             text: model.unit

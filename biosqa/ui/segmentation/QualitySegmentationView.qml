@@ -39,7 +39,10 @@ ScrollView {
                     Layout.alignment: Qt.AlignBottom
                 }
                 Text {
-                    text: segTable.count + " run-length segments · table of contents by quality"
+                    // model-side count: the table is a virtualizing ListView now, so its
+                    // instantiated-row count is no longer the number of segments (and the grid
+                    // must be able to state this without a table existing at all).
+                    text: segments.totalCount + " run-length segments · table of contents by quality"
                     color: Theme.textMuted
                     font.family: Theme.fontMono
                     font.pixelSize: 12
@@ -98,13 +101,27 @@ ScrollView {
             }
 
             // ---- segment table / grid (switchable) ---------------------
-            // The table is always instantiated (its `count` feeds the header meta) but hidden in
-            // grid mode; the grid is lazy-loaded so it only builds thumbnails when actually shown.
-            SegmentTable {
-                id: segTable
-                visible: root.segView === "table"
+            // Both are lazy (the header meta now reads the count from the model, so neither view
+            // has to exist for it) and both VIRTUALIZE, which needs a BOUNDED height -- an
+            // unbounded ListView/GridView sizes itself to its whole content and instantiates every
+            // delegate anyway. The cap is the page viewport minus the chrome above it: a short
+            // list stays under the cap and keeps its natural height, so the page ScrollView goes
+            // on doing the scrolling (no nested-scroll fight); a long one scrolls internally.
+            readonly property int bodyCap: Math.max(240, root.height - 330)
+
+            Loader {
+                id: tableLoader
+                active: root.segView === "table"
+                visible: active
                 Layout.topMargin: 20
                 Layout.fillWidth: true
+                Layout.preferredHeight: item ? item.implicitHeight : 0
+                sourceComponent: Component {
+                    SegmentTable {
+                        width: tableLoader.width
+                        maxBodyHeight: page.bodyCap
+                    }
+                }
             }
             Loader {
                 id: gridLoader
@@ -114,7 +131,10 @@ ScrollView {
                 Layout.fillWidth: true
                 Layout.preferredHeight: item ? item.implicitHeight : 0
                 sourceComponent: Component {
-                    SegmentGrid { width: gridLoader.width }
+                    SegmentGrid {
+                        width: gridLoader.width
+                        maxBodyHeight: page.bodyCap
+                    }
                 }
             }
         }

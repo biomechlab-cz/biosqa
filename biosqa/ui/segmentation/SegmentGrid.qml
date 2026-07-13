@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import "../"
 import "../components"
@@ -7,17 +8,36 @@ import "../components"
 // shows a mini-waveform of the segment's real samples plus the same info the table denotes: tier
 // chip + code, start–end, confidence, artifacts, and the ↺ recoverable marker. Bound to the same
 // `segments` model + `selection` source of truth, so selection/highlight stay in sync everywhere.
-Flow {
+//
+// A VIRTUALIZING GridView (reuseItems), not a Flow+Repeater: the Repeater built a card — each with
+// its own Canvas — for every RLE segment in the recording, and a stagger Timer existed only to
+// spread the resulting thundering herd of envelope builds. With recycling, only the cells actually
+// on screen exist, so the curve is fetched in onReused/Component.onCompleted and the Timer is gone.
+GridView {
     id: root
-    spacing: 12
-    property alias count: rep.count
+    clip: true
+    model: segments
+    reuseItems: true
+    boundsBehavior: Flickable.StopAtBounds
+    cacheBuffer: 300
+
+    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
     // Responsive columns: fit as many ~minCard-wide cards as the width allows, then stretch each to
     // fill the row so the grid spans the full width edge-to-edge (like the table) and re-flows as
     // the window resizes.
     readonly property int minCard: 190
-    readonly property int cols: Math.max(1, Math.floor((width + spacing) / (minCard + spacing)))
-    readonly property real cardW: Math.floor((width - (cols - 1) * spacing) / cols)
+    readonly property int gap: 12
+    readonly property int cardH: 150
+    readonly property int cols: Math.max(1, Math.floor((width + gap) / (minCard + gap)))
+
+    cellWidth: Math.floor(width / cols)
+    cellHeight: cardH + gap
+
+    // bounded viewport => virtualization; short grids keep their natural height
+    property int maxBodyHeight: 560
+    readonly property int rowsNeeded: Math.ceil(count / Math.max(1, cols))
+    implicitHeight: count === 0 ? 0 : Math.min(rowsNeeded * cellHeight, maxBodyHeight)
 
     function fmt(sec) {
         sec = Math.max(0, Math.round(sec))
@@ -25,28 +45,43 @@ Flow {
         return m + ":" + (s < 10 ? "0" : "") + s
     }
 
-    Repeater {
-        id: rep
-        model: segments
-        delegate: Rectangle {
-            id: card
-            required property int index
-            required property real startSec
-            required property real endSec
-            required property string tier
-            required property real confidence
-            required property var artifacts
-            required property bool recoverable
-            readonly property var pal: Theme.currentQualityPalette()[tier]
-                                       || Theme.currentQualityPalette()["Q3"]
-            readonly property bool selected: selection.selectedIndex === index
+    delegate: Item {
+        id: cell
+        required property int index
+        required property real startSec
+        required property real endSec
+        required property string tier
+        required property real confidence
+        required property var artifacts
+        required property bool recoverable
 
-            width: root.cardW
-            height: 150
+        width: root.cellWidth
+        height: root.cellHeight
+
+        // A recycled delegate keeps its old curve until the new range is fetched, so refresh on
+        // both first build and every reuse.
+        function refreshCurve() {
+            mini.curve = signalView.curveForRange(cell.startSec, cell.endSec)
+        }
+        Component.onCompleted: cell.refreshCurve()
+        GridView.onReused: cell.refreshCurve()
+
+        Rectangle {
+            id: card
+            anchors.fill: parent
+            anchors.rightMargin: root.gap
+            anchors.bottomMargin: root.gap
+            readonly property var pal: Theme.tierInfo(cell.tier)
+            readonly property bool selected: selection.selectedIndex === cell.index
+
             radius: 10
             color: selected ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.10) : Theme.bgPanelAlt
             border.width: selected ? 2 : 1
             border.color: selected ? Theme.accent : (cardHover.containsMouse ? Theme.accent : Theme.borderColor)
+
+            Accessible.role: Accessible.Button
+            Accessible.name: "Segment " + (cell.index + 1) + ", " + cell.tier + " " + card.pal.label
+                             + ", " + Math.round(cell.confidence * 100) + "% confidence"
 
             ColumnLayout {
                 anchors.fill: parent
@@ -57,18 +92,18 @@ Flow {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
-                    TierChip { tier: card.tier; size: 16 }
+                    TierChip { tier: cell.tier; size: 16 }
                     Text {
-                        text: card.tier; color: card.pal.color
+                        text: cell.tier; color: card.pal.color
                         font.family: Theme.fontMono; font.pixelSize: 12; font.weight: Font.DemiBold
                     }
                     Text {
-                        visible: card.recoverable; text: "↺"; color: Theme.accent
+                        visible: cell.recoverable; text: "↺"; color: Theme.accent
                         font.pixelSize: 12; font.bold: true
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        text: (card.confidence * 100).toFixed(0) + "%"; color: Theme.textMuted
+                        text: (cell.confidence * 100).toFixed(0) + "%"; color: Theme.textMuted
                         font.family: Theme.fontMono; font.pixelSize: 11
                     }
                 }
@@ -121,16 +156,6 @@ Flow {
                             }
                             ctx.stroke()
                         }
-                        // Stagger the envelope builds so a large grid doesn't paint N Canvases in one
-                        // frame. The read itself is now an in-memory cache slice (see curveForRange), so
-                        // this only smooths rendering. A MODULO spread (not the old `min(2500, index*10)`,
-                        // which collapsed every card at index>=250 onto the same 2500 ms tick — a thundering
-                        // herd) keeps at most ~1/50th of the cards firing in any one slot.
-                        Timer {
-                            interval: 16 + (card.index % 50) * 12
-                            running: true; repeat: false
-                            onTriggered: mini.curve = signalView.curveForRange(card.startSec, card.endSec)
-                        }
                     }
                     Text {
                         anchors.centerIn: parent
@@ -142,14 +167,14 @@ Flow {
 
                 // footer: index + time
                 Text {
-                    text: "#" + (card.index + 1) + " · " + root.fmt(card.startSec) + "–" + root.fmt(card.endSec)
+                    text: "#" + (cell.index + 1) + " · " + root.fmt(cell.startSec) + "–" + root.fmt(cell.endSec)
                     color: Theme.textSecondary
                     font.family: Theme.fontMono; font.pixelSize: 10
                     Layout.fillWidth: true; elide: Text.ElideRight
                 }
                 Text {
-                    visible: card.artifacts && card.artifacts.length > 0
-                    text: (card.artifacts && card.artifacts.length > 0) ? card.artifacts.join(", ") : ""
+                    visible: cell.artifacts && cell.artifacts.length > 0
+                    text: (cell.artifacts && cell.artifacts.length > 0) ? cell.artifacts.join(", ") : ""
                     color: Theme.textMuted
                     font.family: Theme.fontUi; font.pixelSize: 9
                     Layout.fillWidth: true; elide: Text.ElideRight
@@ -162,12 +187,12 @@ Flow {
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    selection.selectByIndex(card.index)
-                    if (card.endSec > card.startSec)
-                        signalView.setView(card.startSec, card.endSec)
+                    selection.selectByIndex(cell.index)
+                    if (cell.endSec > cell.startSec)
+                        signalView.setView(cell.startSec, cell.endSec)
                 }
                 onDoubleClicked: {
-                    selection.selectByIndex(card.index)
+                    selection.selectByIndex(cell.index)
                     AppController.go("inspector")
                 }
             }

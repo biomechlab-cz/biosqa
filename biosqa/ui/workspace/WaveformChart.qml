@@ -10,6 +10,7 @@ import "../components"
 // width/height (chart.plotArea isn't reliable across render backends).
 Item {
     id: root
+    objectName: "waveformChart"
     property string tool: "pan"
     property real playheadSec: NaN
 
@@ -117,24 +118,39 @@ Item {
     }
 
     // ---- quality bands (translucent, over the trace) ------------------------
-    Item {
+    // ONE painted item, not one QQuickItem per RLE segment: a long recording carries
+    // thousands of bands and the old Repeater instantiated a Rectangle for every one of
+    // them (startup stall, and N x/width bindings re-evaluated on every pan frame). The
+    // bands carry no mouse interaction here, so there is no hit-testing to preserve.
+    Canvas {
         id: bandsLayer
         anchors.fill: parent
-        clip: true
+        readonly property var bands: segments.segmentBands
         readonly property real totalDur: segments.totalDurationSec
-        Repeater {
-            model: segments.segmentBands
-            delegate: Rectangle {
-                required property var modelData
-                readonly property real s0: modelData.start * bandsLayer.totalDur
-                readonly property real s1: (modelData.start + modelData.width) * bandsLayer.totalDur
-                readonly property var pal: Theme.currentQualityPalette()[modelData.tier]
-                                           || Theme.currentQualityPalette()["Q3"]
-                visible: s1 >= root.viewStart && s0 <= root.viewEnd
-                x: root.xForSec(s0)
-                width: Math.max(1, root.xForSec(s1) - root.xForSec(s0))
-                height: bandsLayer.height
-                color: Qt.rgba(pal.color.r, pal.color.g, pal.color.b, 0.15)
+        readonly property real vs: root.viewStart
+        readonly property real ve: root.viewEnd
+        readonly property bool cbPal: Theme.useColorBlindPalette
+        onBandsChanged: requestPaint()
+        onTotalDurChanged: requestPaint()
+        onVsChanged: requestPaint()
+        onVeChanged: requestPaint()
+        onCbPalChanged: requestPaint()
+        onPaint: {
+            var ctx = getContext("2d")
+            ctx.reset()
+            var bs = bandsLayer.bands
+            var dur = bandsLayer.totalDur
+            if (!bs || bs.length === 0 || dur <= 0)
+                return
+            for (var i = 0; i < bs.length; i++) {
+                var s0 = bs[i].start * dur
+                var s1 = (bs[i].start + bs[i].width) * dur
+                if (s1 < bandsLayer.vs || s0 > bandsLayer.ve)
+                    continue
+                var c = Theme.tierInfo(bs[i].tier).color
+                var xa = root.xForSec(s0)
+                ctx.fillStyle = Qt.rgba(c.r, c.g, c.b, 0.15)
+                ctx.fillRect(xa, 0, Math.max(1, root.xForSec(s1) - xa), height)
             }
         }
     }
@@ -223,7 +239,15 @@ Item {
             tip.timeText = root._fmtClock(sec)
             tip.windowText = sec.toFixed(1) + " s"
             tip.valueText = signalView.valueAt(sec).toFixed(2) + " a.u."
-            if (seg) { tip.qualityTier = seg.tier; tip.confidence = seg.confidence }
+            // The else-branch is load-bearing: without it the tooltip kept the LAST segment's
+            // tier/confidence and showed it over ungraded time (pre-inference, or a gap).
+            if (seg) {
+                tip.hasQuality = true
+                tip.qualityTier = seg.tier
+                tip.confidence = seg.confidence
+            } else {
+                tip.clearQuality()
+            }
             tip.x = Math.min(m.x + 14, root.width - tip.width - 8)
             tip.y = Math.min(m.y + 14, root.height - tip.height - 8)
             tip.visible = true
@@ -238,5 +262,5 @@ Item {
         }
     }
 
-    HoverTooltip { id: tip; visible: false; z: 60 }
+    HoverTooltip { id: tip; objectName: "hoverTooltip"; visible: false; z: 60 }
 }

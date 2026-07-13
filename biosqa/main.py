@@ -51,11 +51,32 @@ from biosqa.viewmodels.signal_view_controller import SignalViewController
 if getattr(sys, "frozen", False):
     _BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     UI_DIR = _BASE / "biosqa" / "ui"
-    MODELS_DIR = _BASE / "models"
+    # build/biosqa.spec ships the models at the bundle root; accept the package-relative
+    # layout too so the spec can move to it without breaking this resolver.
+    _MODEL_CANDIDATES = (_BASE / "biosqa" / "models", _BASE / "models")
 else:
     _PKG = Path(__file__).resolve().parent
     UI_DIR = _PKG / "ui"
-    MODELS_DIR = _PKG.parent / "models"
+    # A wheel install ships the models as package data (biosqa/models, force-included by
+    # pyproject.toml); a dev checkout keeps them at the repo root (app/models) and has no
+    # package-relative copy. Package-relative wins so an installed app can never read a
+    # stale sibling directory that happens to sit next to site-packages.
+    _MODEL_CANDIDATES = (_PKG / "models", _PKG.parent / "models")
+
+
+def _resolve_models_dir(candidates: tuple[Path, ...]) -> Path:
+    """First candidate that actually holds model cards; else the last (for an honest error).
+
+    Picking a directory that merely *exists* would silently select an empty models/ over a
+    populated one, leaving the app modelless with no explanation.
+    """
+    for path in candidates:
+        if path.is_dir() and any(path.glob("*.model_card.json")):
+            return path
+    return candidates[-1]
+
+
+MODELS_DIR = _resolve_models_dir(_MODEL_CANDIDATES)
 MAIN_QML = UI_DIR / "Main.qml"
 FONTS_DIR = UI_DIR / "fonts"
 

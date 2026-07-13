@@ -91,8 +91,7 @@ ColumnLayout {
                 id: tierBtn
                 required property string modelData
                 readonly property bool active: root.effTier === modelData
-                readonly property color tc: (Theme.currentQualityPalette()[modelData]
-                                             || Theme.currentQualityPalette()["Q3"]).color
+                readonly property color tc: Theme.tierInfo(modelData).color
                 Layout.fillWidth: true
                 implicitHeight: 40
                 padding: 0
@@ -115,8 +114,7 @@ ColumnLayout {
                         font.weight: Font.DemiBold
                     }
                     Text {
-                        text: (Theme.currentQualityPalette()[tierBtn.modelData]
-                               || Theme.currentQualityPalette()["Q3"]).label
+                        text: Theme.tierInfo(tierBtn.modelData).label
                         color: Theme.textSecondary
                         font.family: Theme.fontUi
                         font.pixelSize: 10

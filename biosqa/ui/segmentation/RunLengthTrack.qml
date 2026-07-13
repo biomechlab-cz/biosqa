@@ -67,8 +67,7 @@ GlassPanel {
                 required property real startSec
                 required property real endSec
                 readonly property bool selected: selection.selectedIndex === block.index
-                readonly property var pal: Theme.currentQualityPalette()[block.tier]
-                                           || Theme.currentQualityPalette()["Q3"]
+                readonly property var pal: Theme.tierInfo(block.tier)
 
                 x: blocks.xForSec(startSec)
                 width: Math.max(1, blocks.xForSec(endSec) - blocks.xForSec(startSec))

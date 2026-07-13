@@ -9,6 +9,7 @@ so validation here is intentionally strict and fails loudly.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -89,6 +90,7 @@ class ModelCard:
     ood: dict | None = None                      # {"method": "conformal_aps", "grade_nonconformity_threshold": τ, "alpha": α}
     novelty: dict | None = None                  # {"method": "mahalanobis_sqi", mean, std, inv_corr, d2_threshold, feature_names}
     feature_attribution: dict | None = None      # {"feature_fn": "combined_vector", feature_names, reference_mean, reference_std} — background for group-Shapley grade attribution (fusion models only)
+    onnx_sha256: str | None = None               # OPTIONAL integrity digest of the sibling .onnx; canonical lowercase hex
 
     @property
     def n_classes(self) -> int:
@@ -100,6 +102,19 @@ class ModelCard:
         calibrated on temperature-scaled grade probabilities, so it MUST be applied before APS decoding."""
         try:
             return float(self.calibration["temperatures"]["grade"])  # type: ignore[index]
+        except (TypeError, KeyError, ValueError):
+            return 1.0
+
+    @property
+    def usable_temperature(self) -> float:
+        """Temperature-scaling factor for the binary usable/unusable head (1.0 = none).
+
+        Every shipped card calibrates this alongside ``grade``; applying it is what makes the
+        usable head's probabilities mean what they say. Absent/unparseable -> 1.0 (identity),
+        which is the honest no-op, not a guess.
+        """
+        try:
+            return float(self.calibration["temperatures"]["usable"])  # type: ignore[index]
         except (TypeError, KeyError, ValueError):
             return 1.0
 
@@ -146,6 +161,71 @@ class ModelCard:
         raise ModelCardError(
             f"{self.source_path}: no head named {name!r} (have {[h.name for h in self.heads]!r})"
         )
+
+    def verify_onnx(self, onnx_path: str | Path) -> str | None:
+        """Check the .onnx artifact against the card's OPTIONAL ``onnx_sha256`` digest.
+
+        Model identity is otherwise a free-text label (``model_version``): without this, a
+        swapped, truncated or corrupted .onnx loads happily as long as the card says the right
+        words. Callers should run this before opening the session -- refuse to run rather than
+        predict from an unknown model.
+
+        Returns the verified digest, or ``None`` when the card carries no digest (every card
+        shipped before this field existed): verification is then SKIPPED, never faked. A
+        mismatch is a hard ``ModelCardError``.
+        """
+        if self.onnx_sha256 is None:
+            return None
+        path = Path(onnx_path)
+        if not path.exists():
+            raise ModelCardError(
+                f"{path}: ONNX model not found -- cannot verify the card's onnx_sha256 digest"
+            )
+        actual = sha256_file(path)
+        if actual != self.onnx_sha256:
+            raise ModelCardError(
+                f"{path}: ONNX SHA-256 mismatch -- {self.source_path.name} declares "
+                f"{self.onnx_sha256} but the file hashes to {actual}. The model artifact does not "
+                f"match its card (swapped, corrupted, or truncated) -- refusing to load."
+            )
+        return actual
+
+
+def sha256_file(path: str | Path, chunk_size: int = 1 << 20) -> str:
+    """SHA-256 a file in streaming chunks, returning lowercase hex.
+
+    Chunked because the .onnx artifacts are megabytes and this runs on the load path.
+    """
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _parse_onnx_sha256(raw: dict[str, Any], source_path: Path) -> str | None:
+    """Parse the OPTIONAL ``onnx_sha256`` integrity field into canonical lowercase hex.
+
+    Absent -> ``None`` (every card shipped before this field existed keeps loading; the app
+    just skips verification). Present but malformed is a HARD error rather than a silent
+    downgrade to "unverified" -- a typo'd digest must not read as "no integrity check".
+    Accepts a bare 64-char hex digest or a ``sha256:``-prefixed one (as ``training_data_hash``
+    is written).
+    """
+    value = raw.get("onnx_sha256")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ModelCardError(f"{source_path}: 'onnx_sha256' must be a string")
+    digest = value.strip().lower()
+    if digest.startswith("sha256:"):
+        digest = digest[len("sha256:"):]
+    if len(digest) != 64 or digest.strip("0123456789abcdef"):
+        raise ModelCardError(
+            f"{source_path}: 'onnx_sha256' must be a 64-char hex SHA-256 digest "
+            f"(optionally 'sha256:'-prefixed), got {value!r}"
+        )
+    return digest
 
 
 def _validate_raw(raw: dict[str, Any], source_path: Path) -> None:
@@ -287,6 +367,7 @@ def load_model_card(path: str | Path) -> ModelCard:
         ood=raw.get("ood"),
         novelty=raw.get("novelty"),
         feature_attribution=raw.get("feature_attribution"),
+        onnx_sha256=_parse_onnx_sha256(raw, source_path),
     )
 
 

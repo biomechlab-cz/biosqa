@@ -6,8 +6,11 @@ import "../components"
 
 // Overview donut hero (mockup lines 336-356): per-tier ring (strokeWidth 18) with a
 // centered usable-% readout, above a tier legend showing each tier's share of the
-// recording. Fed by `segments.tierFractions`; falls back to a static mockup
-// distribution when no inference has run yet so the tile is never blank.
+// recording. Fed by `segments.tierFractions`.
+//
+// There is NO fallback distribution. This tile previously painted a hardcoded mockup
+// ring whenever no inference had run, so an untouched app showed an invented quality
+// breakdown as if it were measured. An empty tile is the only honest empty state.
 ColumnLayout {
     id: root
     spacing: 0
@@ -15,11 +18,10 @@ ColumnLayout {
     // e.g. { "Q3": 0.48, "Q2": 0.355, "Q1": 0.10, "Q0": 0.065 }
     property var fractions: ({})
 
-    readonly property var _static: ({ "Q3": 0.48, "Q2": 0.355, "Q1": 0.10, "Q0": 0.065 })
-    readonly property var _eff: (root.fractions && Object.keys(root.fractions).length > 0)
-                                ? root.fractions : root._static
+    readonly property bool hasData: root.fractions && Object.keys(root.fractions).length > 0
     readonly property var _tiers: ["Q3", "Q2", "Q1", "Q0"]
-    readonly property real _usable: (root._eff["Q3"] || 0) + (root._eff["Q2"] || 0)
+    readonly property real _usable: (root.fractions["Q3"] || 0) + (root.fractions["Q2"] || 0)
+    readonly property string usableText: root.hasData ? ((root._usable * 100).toFixed(1) + "%") : "—"
 
     // ---- ring ----------------------------------------------------------------
     Item {
@@ -33,7 +35,7 @@ ColumnLayout {
         Canvas {
             id: ring
             anchors.fill: parent
-            property var watch: root._eff
+            property var watch: root.fractions
             onWatchChanged: requestPaint()
             // repaint on a color-blind palette toggle too — the ring reads currentQualityPalette() in
             // onPaint, so without this the ring keeps stale tier colors until fractions next change.
@@ -44,15 +46,22 @@ ColumnLayout {
                 ctx.reset()
                 var cx = 88, cy = 88, r = 88 - 11
                 ctx.lineWidth = 18
+                if (!root.hasData) {                       // no inference yet: an empty track, no tiers
+                    ctx.beginPath()
+                    ctx.strokeStyle = Theme.bgPanelAlt
+                    ctx.arc(cx, cy, r, 0, 2 * Math.PI)
+                    ctx.stroke()
+                    return
+                }
                 var start = -Math.PI / 2
                 for (var i = 0; i < root._tiers.length; i++) {
                     var t = root._tiers[i]
-                    var frac = root._eff[t] || 0
+                    var frac = root.fractions[t] || 0
                     if (frac <= 0)
                         continue
                     var end = start + 2 * Math.PI * frac
                     ctx.beginPath()
-                    ctx.strokeStyle = Theme.currentQualityPalette()[t].color
+                    ctx.strokeStyle = Theme.tierInfo(t).color
                     ctx.arc(cx, cy, r, start, end)
                     ctx.stroke()
                     start = end
@@ -65,8 +74,8 @@ ColumnLayout {
             spacing: 1
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: (root._usable * 100).toFixed(1) + "%"
-                color: Theme.textPrimary
+                text: root.usableText
+                color: root.hasData ? Theme.textPrimary : Theme.textMuted
                 font.family: Theme.fontMono
                 font.pixelSize: 26
                 font.bold: true
@@ -82,17 +91,30 @@ ColumnLayout {
         }
     }
 
+    // ---- empty state ---------------------------------------------------------
+    Text {
+        visible: !root.hasData
+        Layout.fillWidth: true
+        horizontalAlignment: Text.AlignHCenter
+        text: "No inference yet — open a recording to measure the quality distribution."
+        color: Theme.textMuted
+        font.family: Theme.fontUi
+        font.pixelSize: 12
+        wrapMode: Text.WordWrap
+    }
+
     // ---- legend --------------------------------------------------------------
     ColumnLayout {
+        visible: root.hasData
         Layout.fillWidth: true
         spacing: 9
 
         Repeater {
-            model: root._tiers
+            model: root.hasData ? root._tiers : []
             delegate: RowLayout {
                 id: legRow
                 required property string modelData
-                readonly property var _p: Theme.currentQualityPalette()[modelData]
+                readonly property var _p: Theme.tierInfo(modelData)
                 Layout.fillWidth: true
                 spacing: 9
 
@@ -114,7 +136,7 @@ ColumnLayout {
                     Layout.fillWidth: true
                 }
                 Text {
-                    text: ((root._eff[legRow.modelData] || 0) * 100).toFixed(1) + "%"
+                    text: ((root.fractions[legRow.modelData] || 0) * 100).toFixed(1) + "%"
                     color: Theme.textPrimary
                     font.family: Theme.fontMono
                     font.pixelSize: 12

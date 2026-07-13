@@ -30,6 +30,9 @@ class ChannelEntry:
     unit: str = ""
     mod_color: str = field(default="")
     sparkline: list[float] = field(default_factory=list)
+    #: this is the channel inference actually GRADED — the quality bands/segments/exports describe
+    #: it and no other channel of the recording. At most one row carries it (none if nothing ran).
+    analyzed: bool = False
 
     def __post_init__(self) -> None:
         if not self.mod_color:
@@ -39,7 +42,7 @@ class ChannelEntry:
 class ChannelListModel(QAbstractListModel):
     """`QAbstractListModel` over the open recording's channels.
 
-    Roles: ``name``, ``visible``, ``modColor``, ``unit``, ``sparkline``.
+    Roles: ``name``, ``visible``, ``modColor``, ``unit``, ``sparkline``, ``analyzed``.
     """
 
     NameRole = Qt.UserRole + 1
@@ -47,6 +50,7 @@ class ChannelListModel(QAbstractListModel):
     ModColorRole = Qt.UserRole + 3
     UnitRole = Qt.UserRole + 4
     SparklineRole = Qt.UserRole + 5
+    AnalyzedRole = Qt.UserRole + 6
 
     channelVisibilityChanged = Signal(int, bool)  # (index, visible)
     channelOrderChanged = Signal()
@@ -62,6 +66,7 @@ class ChannelListModel(QAbstractListModel):
             self.ModColorRole: lambda e: e.mod_color,
             self.UnitRole: lambda e: e.unit,
             self.SparklineRole: lambda e: e.sparkline,
+            self.AnalyzedRole: lambda e: e.analyzed,
         }
 
     def _get_count(self) -> int:
@@ -92,6 +97,7 @@ class ChannelListModel(QAbstractListModel):
             self.ModColorRole: b"modColor",
             self.UnitRole: b"unit",
             self.SparklineRole: b"sparkline",
+            self.AnalyzedRole: b"analyzed",
         }
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole) -> Any:  # noqa: N802

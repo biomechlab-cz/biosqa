@@ -21,6 +21,6 @@ Button {
         radius: Theme.radiusControl
         color: root.hovered ? Theme.hoverBg : "transparent"
         border.width: 1
-        border.color: root.hovered ? "#33415a" : Theme.borderColor
+        border.color: root.hovered ? Theme.borderHover : Theme.borderColor
     }
 }

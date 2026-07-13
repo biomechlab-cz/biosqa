@@ -9,6 +9,7 @@ pure numpy/stdlib so it is directly unit-testable (see
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -70,6 +71,56 @@ def _union_run_artifacts(
     return tuple(seen)
 
 
+def _start_times(
+    n: int, window_stride_sec: float, window_starts_sec: Sequence[float] | None
+) -> np.ndarray:
+    """Per-window START TIMES: the REAL ones when the caller has them, else the uniform grid.
+
+    ``preprocess.make_windows`` END-ANCHORS its final window when the record is not a whole number of
+    windows (so the tail is graded), which puts that window OFF the ``i * stride`` grid. Assuming the
+    grid then attributes the tail window's grade to a span that runs past the end of the recording --
+    by up to one full stride (60 s for EDA at overlap 0). Callers that know the true starts pass them.
+    """
+    if window_starts_sec is None:
+        return np.arange(n, dtype=np.float64) * float(window_stride_sec)
+    starts = np.asarray(window_starts_sec, dtype=np.float64).reshape(-1)
+    if starts.shape[0] != n:
+        raise ValueError("window_starts_sec must have the same length as tiers")
+    return starts
+
+
+def _run_bounds(
+    starts: np.ndarray, window_length_sec: float, start_idx: int, end_idx: int, n: int
+) -> tuple[float, float]:
+    """``(start_sec, end_sec)`` of the run over windows ``[start_idx, end_idx)`` on an ARBITRARY
+    (possibly non-uniform) start grid.
+
+    The boundary between the run ending at window ``e-1`` and the run starting at window ``e`` belongs
+    at the MIDPOINT OF THE AMBIGUOUS ZONE ``[starts[e], starts[e-1] + L]`` -- the zone both windows
+    cover and disagree about. That makes adjacent intervals contiguous and non-overlapping (no span is
+    claimed by two tiers, no duration double-counted). When the windows do NOT overlap the zone is
+    empty and the plain window edges are used, so overlap 0 is a no-op. On a uniform grid
+    (``starts[i] = i * stride``) the midpoint reduces exactly to ``e * stride + (L - stride) / 2``.
+    The track's outer edges are never trimmed: the first run starts at ``starts[0]``, the last ends at
+    ``starts[-1] + L`` -- i.e. at the true end of the analyzed signal, never past it.
+    """
+    length = float(window_length_sec)
+
+    def _boundary(e: int) -> tuple[float, float]:
+        prev_end = float(starts[e - 1]) + length  # end of the last window of the earlier run
+        next_start = float(starts[e])             # start of the first window of the later run
+        if next_start >= prev_end:                # windows do not overlap -> no ambiguous zone
+            return prev_end, next_start
+        mid = 0.5 * (next_start + prev_end)
+        return mid, mid
+
+    start_sec = float(starts[0]) if start_idx == 0 else _boundary(int(start_idx))[1]
+    end_sec = (
+        float(starts[n - 1]) + length if end_idx == n else _boundary(int(end_idx))[0]
+    )
+    return start_sec, end_sec
+
+
 def run_length_encode(
     tiers: np.ndarray,
     confidences: np.ndarray,
@@ -84,6 +135,7 @@ def run_length_encode(
     grade_probs_per_window: "np.ndarray | None" = None,
     class_order: "tuple[str, ...] | list[str] | None" = None,
     conformal_threshold: float | None = None,
+    window_starts_sec: Sequence[float] | None = None,
 ) -> list[QualityInterval]:
     """Collapse a per-window tier/confidence track into contiguous intervals.
 
@@ -92,18 +144,30 @@ def run_length_encode(
             hashable, e.g. ``["Q3", "Q3", "Q1", "Q1", "Q1", "Q3"]``).
         confidences: 1-D array of per-window confidence in ``[0, 1]``, same
             length as ``tiers``.
-        window_stride_sec: time between consecutive window starts.
-        window_length_sec: duration covered by one window (used only for the
-            final interval's end time).
+        window_stride_sec: time between consecutive window starts. Used ONLY to
+            synthesize the uniform start grid ``i * stride`` when
+            ``window_starts_sec`` is not given.
+        window_length_sec: duration covered by one window. When consecutive
+            windows overlap, run boundaries are placed at the midpoint of the
+            shared (ambiguous) zone so the returned intervals stay contiguous
+            and non-overlapping.
         artifacts_per_window: optional per-window artifact-type tag lists (from
             the multilabel head via :func:`threshold_artifact_labels`), same
             length as ``tiers``. When given, each interval's ``artifacts`` is the
             order-preserving union of tags over its run; when ``None`` (legacy
             single-head model) every interval gets no artifact tags.
+        window_starts_sec: the ACTUAL start time of every window (from
+            :func:`preprocess.window_starts`), same length as ``tiers``. The
+            window grid is NOT uniform when the record does not tile evenly --
+            ``make_windows`` end-anchors the final window so the tail is graded --
+            so a caller that has the real starts must pass them, or the tail
+            window's grade is attributed to a span running past the end of the
+            recording. Defaults to the uniform ``i * window_stride_sec`` grid.
 
     Returns:
-        A list of ``QualityInterval`` covering the whole track, ordered by
-        time, with confidence averaged over each run.
+        A list of ``QualityInterval`` covering the whole analyzed span, ordered by
+        time, with confidence averaged over each run. The last interval ends at
+        ``starts[-1] + window_length_sec`` -- never past the analyzed signal.
     """
     tiers = np.asarray(tiers)
     confidences = np.asarray(confidences, dtype=np.float64)
@@ -124,10 +188,16 @@ def run_length_encode(
     run_starts = np.concatenate(([0], change_points))
     run_ends = np.concatenate((change_points, [n]))
 
+    # Runs are bounded at DECISION MIDPOINTS on the window grid the model ACTUALLY used (see
+    # `_run_bounds` / `_start_times`): overlapping windows share an ambiguous zone that naive bounds
+    # would claim TWICE, and the end-anchored tail window is not on the uniform grid at all.
+    starts = _start_times(n, window_stride_sec, window_starts_sec)
+
     intervals: list[QualityInterval] = []
     for start_idx, end_idx in zip(run_starts, run_ends):
-        start_sec = start_idx * window_stride_sec
-        end_sec = (end_idx - 1) * window_stride_sec + window_length_sec
+        start_sec, end_sec = _run_bounds(
+            starts, window_length_sec, int(start_idx), int(end_idx), n
+        )
         artifacts = (
             _union_run_artifacts(artifacts_per_window, int(start_idx), int(end_idx))
             if artifacts_per_window is not None
@@ -182,6 +252,71 @@ def run_length_encode(
             )
         )
     return intervals
+
+
+def window_intervals(
+    tiers: np.ndarray,
+    confidences: np.ndarray,
+    window_starts_sec: Sequence[float],
+    window_length_sec: float,
+    artifacts_per_window: list[list[str]] | None = None,
+    recoverable_per_window: "np.ndarray | list[bool] | None" = None,
+    recovered_tier_per_window: list[str] | None = None,
+    uncertainty_per_window: "np.ndarray | list[float] | None" = None,
+    rate_usable_per_window: "np.ndarray | list[bool] | None" = None,
+    hr_bpm_per_window: "np.ndarray | list[float] | None" = None,
+    grade_probs_per_window: "np.ndarray | None" = None,
+    class_order: "tuple[str, ...] | list[str] | None" = None,
+    conformal_threshold: float | None = None,
+) -> list[QualityInterval]:
+    """One ``QualityInterval`` PER MODEL WINDOW -- the model's raw, still-OVERLAPPING statements.
+
+    :func:`run_length_encode` deliberately collapses these: it resolves a time that several windows
+    cover into ONE displayed grade (the run boundary sits at the midpoint of the ambiguous zone), so
+    its output is non-overlapping and the fact that the model graded a given second more than once is
+    gone. :mod:`inference.refine` needs exactly that discarded fact -- the SET of grades the model gave
+    the windows covering a time -- to know how far a poor boundary may honestly be tightened, so it
+    reads these, not the RLE output.
+
+    Each window's interval spans ``[start, start + window_length_sec]`` and carries only that window's
+    own numbers (its confidence, uncertainty, artifact tags, ...), never a run aggregate. Windows
+    overlap whenever the caller used ``overlap > 0``; the list is in window order.
+    """
+    tiers = np.asarray(tiers)
+    confidences = np.asarray(confidences, dtype=np.float64)
+    n = tiers.shape[0]
+    if confidences.shape[0] != n:
+        raise ValueError("tiers and confidences must have the same length")
+    starts = np.asarray(window_starts_sec, dtype=np.float64).reshape(-1)
+    if starts.shape[0] != n:
+        raise ValueError("window_starts_sec must have the same length as tiers")
+
+    out: list[QualityInterval] = []
+    for i in range(n):
+        conformal_set: tuple[str, ...] = ()
+        if grade_probs_per_window is not None and conformal_threshold is not None and class_order is not None:
+            from biosqa.inference.conformal import aps_prediction_set
+            conformal_set = aps_prediction_set(
+                np.asarray(grade_probs_per_window[i], dtype=np.float64), class_order, conformal_threshold
+            )
+        out.append(
+            QualityInterval(
+                start_sec=float(starts[i]),
+                end_sec=float(starts[i]) + float(window_length_sec),
+                tier=str(tiers[i]),
+                confidence=float(confidences[i]),
+                artifacts=tuple(artifacts_per_window[i]) if artifacts_per_window is not None else (),
+                recoverable=bool(recoverable_per_window[i]) if recoverable_per_window is not None else False,
+                recovered_tier=(
+                    str(recovered_tier_per_window[i]) if recovered_tier_per_window is not None else ""
+                ),
+                uncertainty=float(uncertainty_per_window[i]) if uncertainty_per_window is not None else 0.0,
+                rate_usable=bool(rate_usable_per_window[i]) if rate_usable_per_window is not None else False,
+                hr_bpm=float(hr_bpm_per_window[i]) if hr_bpm_per_window is not None else 0.0,
+                conformal_set=conformal_set,
+            )
+        )
+    return out
 
 
 def threshold_artifact_labels(

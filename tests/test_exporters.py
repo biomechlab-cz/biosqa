@@ -53,13 +53,73 @@ def test_parquet_roundtrip(tmp_path):
 
 
 def test_parquet_and_mat_carry_all_columns(tmp_path):
-    """Regression: the flat-table formats must not silently drop columns (uncertainty/rate_usable/…)."""
+    """Regression: the flat-table formats must not silently drop columns (uncertainty/rate_usable/…).
+
+    ``channel`` is named LITERALLY here as well as via INTERVAL_COLUMNS: asserting only against the
+    constant is self-referential — deleting the column from the constant would keep this green."""
     pq = pytest.importorskip("pyarrow.parquet")
+    assert "channel" in ex.INTERVAL_COLUMNS     # the grades describe ONE channel; the table must say which
     t = pq.read_table(ex.export_intervals_parquet(_intervals(), tmp_path / "o.parquet"))
     assert set(t.column_names) == set(ex.INTERVAL_COLUMNS)
+    assert "channel" in t.column_names
     loadmat = pytest.importorskip("scipy.io").loadmat
     m = loadmat(ex.export_intervals_mat(_intervals(), tmp_path / "o.mat"))["quality_intervals"]
     assert set(ex.INTERVAL_COLUMNS) <= set(m.dtype.names)
+    assert "channel" in m.dtype.names
+
+
+def test_flat_writers_name_the_graded_channel(tmp_path):
+    """C: csv/tsv/parquet/mat are the formats that feed downstream analysis and they carried no
+    channel at all — so a grade could not be tied back to the signal it was computed on. Unknown
+    channel stays an EMPTY cell (an honest blank, never a guessed "0" or the first channel)."""
+    pq = pytest.importorskip("pyarrow.parquet")
+    loadmat = pytest.importorskip("scipy.io").loadmat
+
+    rows = list(csv.DictReader(ex.export_intervals_csv(_intervals(), tmp_path / "c.csv",
+                                                       channel="II").open()))
+    assert [r["channel"] for r in rows] == ["II", "II", "II"]
+
+    tsv = ex.export_intervals_tsv(_intervals(), tmp_path / "c.tsv", channel="II").read_text()
+    lines = tsv.splitlines()
+    assert lines[0].split("\t")[:3] == ["onset", "duration", "trial_type"]   # BIDS core still leads
+    assert lines[0].split("\t")[-1] == "channel" and lines[1].split("\t")[-1] == "II"
+
+    t = pq.read_table(ex.export_intervals_parquet(_intervals(), tmp_path / "c.parquet", channel="II"))
+    assert t.column("channel").to_pylist() == ["II", "II", "II"]
+
+    m = loadmat(ex.export_intervals_mat(_intervals(), tmp_path / "c.mat", channel="II"))
+    cells = m["quality_intervals"]["channel"][0][0].ravel()      # MATLAB cell array of char rows
+    assert [str(v[0]) for v in cells] == ["II"] * 3
+
+    blank = list(csv.DictReader(ex.export_intervals_csv(_intervals(), tmp_path / "b.csv").open()))
+    assert {r["channel"] for r in blank} == {""}      # no analysis context -> empty, not fabricated
+
+
+def test_export_controller_writes_the_analyzed_channel_from_the_analysis_context(tmp_path):
+    """The channel reaches the flat table through the REAL path the Coordinator drives: it stamps the
+    SelectionController with the analysis identity (recording, graded channel, index, model, revision)
+    and the ExportController reads it back. Before, only the JSON provenance and the WFDB ``chan``
+    field carried it — the CSV named no channel at all."""
+    from biosqa.viewmodels.export_controller import ExportController
+    from biosqa.viewmodels.selection_controller import SelectionController
+
+    ivs = _intervals()
+
+    class _Seg:
+        _all_intervals = ivs
+
+    sel = SelectionController()
+    # exactly the call Coordinator._bind_selection_context makes after inference on ["RESP", "II"]
+    sel.set_context(recording="/data/rec2ch.hea", channel="II", channel_index=1,
+                    model_version="v1", revision=3)
+
+    ctl = ExportController()
+    ctl.attach(_Seg(), sel, None)
+    got = {}
+    ctl.exportSucceeded.connect(lambda p: got.setdefault("p", p))
+    ctl.exportToPath(str(tmp_path / "ctx.csv"), "csv")
+    rows = list(csv.DictReader(Path(got["p"]).open()))
+    assert rows and {r["channel"] for r in rows} == {"II"}
 
 
 def test_reclassify_preserves_model_tier_in_export(tmp_path):
@@ -148,6 +208,65 @@ def test_relabel_and_note_survive_export(tmp_path):
     row = list(csv.DictReader(Path(got["p"]).open()))[2]
     assert row["tier"] == "Q2" and row["model_tier"] == "Q0"
     assert row["overridden"] == "True" and "recoverable" in row["note"]
+
+
+def test_local_path_over_url_forms(tmp_path):
+    """F13: the QML FileDialog hands back a URL. The hand-rolled parser DROPPED a UNC URL's host, so
+    an export aimed at \\\\nas01\\quality landed on the local disk instead of the network share."""
+    from biosqa.viewmodels.export_controller import _local_path
+
+    assert _local_path("file:///C:/exports/run1.csv") == "C:/exports/run1.csv"
+    assert _local_path("file://nas01/quality/exports/run1.csv") == "//nas01/quality/exports/run1.csv"
+    assert _local_path("file:///C:/exports/my%20run.csv") == "C:/exports/my run.csv"
+    assert _local_path(r"C:\exports\run1.csv") == r"C:\exports\run1.csv"      # plain path: untouched
+    assert _local_path("/srv/exports/run1.csv") == "/srv/exports/run1.csv"
+
+
+def test_wfdb_annotates_the_analyzed_channel(tmp_path):
+    """WFDB annotations name a signal INDEX — it must be the channel inference graded, not 0."""
+    wfdb = pytest.importorskip("wfdb")
+    ex.export_intervals_wfdb(_intervals(), tmp_path / "rec.qual", fs=250.0, inference_channel=1)
+    ann = wfdb.rdann(str(tmp_path / "rec"), "qual")
+    assert list(ann.chan) == [1, 1, 1]
+
+
+def test_csv_note_cannot_execute_as_a_spreadsheet_formula(tmp_path):
+    """A reviewer note starting with = + - @ is EXECUTED when the CSV/TSV is opened in a spreadsheet.
+    Neutralized for the spreadsheet writers only — json keeps the note verbatim (it is training data,
+    not a cell)."""
+    note = {0: "=cmd|'/c calc'!A1"}
+    rows = list(csv.DictReader(ex.export_intervals_csv(_intervals(), tmp_path / "f.csv",
+                                                       notes=note).open()))
+    assert rows[0]["note"] == "'=cmd|'/c calc'!A1"
+    tsv = ex.export_intervals_tsv(_intervals(), tmp_path / "f.tsv", notes=note).read_text()
+    assert "\t'=cmd" in tsv
+    doc = json.loads(Path(ex.export_intervals_json(_intervals(), tmp_path / "f.json",
+                                                   notes=note)).read_text())
+    assert doc["intervals"][0]["note"] == "=cmd|'/c calc'!A1"       # verbatim for the training sink
+
+
+def test_failed_export_does_not_truncate_the_destination(tmp_path, monkeypatch):
+    """Writers stage into a temp file in the same directory and os.replace() it: a write that fails
+    part-way must leave neither a truncated file at the destination nor a stray staging file."""
+    out = tmp_path / "keep.csv"
+    ex.export_intervals_csv(_intervals(), out)
+    good = out.read_text()
+
+    class _BoomWriter:
+        def __init__(self, *a, **kw):
+            pass
+
+        def writeheader(self):
+            pass
+
+        def writerows(self, rows):
+            raise RuntimeError("disk full")
+
+    monkeypatch.setattr(ex.csv, "DictWriter", _BoomWriter)
+    with pytest.raises(RuntimeError):
+        ex.export_intervals_csv(_intervals(), out)
+    assert out.read_text() == good                 # the previous export survived intact
+    assert not list(tmp_path.glob("*.part"))       # and nothing was left half-written
 
 
 def test_note_only_review_survives_export(tmp_path):

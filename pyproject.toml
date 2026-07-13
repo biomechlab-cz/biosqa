@@ -29,19 +29,21 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 
+# Every runtime dep carries a FLOOR and a CEILING. Unbounded deps let a future major
+# (numpy 3, PySide 7, ...) land silently in a build and break a clinical-adjacent tool at
+# freeze time; requirements.lock pins the exact, hash-verified transitive set that CI and
+# the release builds install from. Nothing is listed here that the app does not import --
+# pyqtgraph/polars/dask/tsdownsample were carried for years with zero imports and only
+# inflated the frozen bundle (~707 MiB).
 dependencies = [
-    "PySide6",         # Qt 6 bindings (LGPL) — QQmlApplicationEngine + custom scene-graph item
-    "pyqtgraph",        # kept as an offline/debugging viewer only (see scenegraph/ note); not on the QML hot path
-    "numpy",
-    "scipy",
-    "zarr>=3",          # Zarr v3 store + sharding for the out-of-core waveform + pyramid layer
-    "dask",
-    "wfdb",             # PhysioNet WFDB (.dat/.hea) reader, preload=False
-    "mne",              # EDF/EDF+ reader, preload=False
-    "onnxruntime",      # CPU EP — runs Plan 1's exported FP32 models, nothing else
-    "tsdownsample",     # MinMaxLTTB decimation kernel for the live (non-precomputed) resolution
-    "pyarrow",
-    "polars",
+    "PySide6>=6.7,<7",       # Qt 6 bindings (LGPL) — QQmlApplicationEngine + custom scene-graph item
+    "numpy>=1.26,<3",
+    "scipy>=1.11,<2",
+    "zarr>=3,<4",            # Zarr v3 store + sharding for the out-of-core waveform + pyramid layer
+    "wfdb>=4.1,<5",          # PhysioNet WFDB (.dat/.hea) reader, preload=False
+    "mne>=1.6,<2",           # EDF/EDF+ reader, preload=False
+    "onnxruntime>=1.17,<2",  # CPU EP — runs Plan 1's exported FP32 models, nothing else
+    "pyarrow>=14,<25",       # Parquet recordings + Parquet segment export
 ]
 
 [project.urls]
@@ -58,16 +60,25 @@ biosqa-studio = "biosqa.main:main"
 # Packaging toolchains — only needed when producing a distributable build,
 # see build/biosqa.spec and build/NUITKA_BUILD_NOTES.md.
 packaging = ["pyinstaller", "nuitka"]
+test = ["pytest"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# hatchling ships EVERY non-ignored file under packages= (not just *.py), so biosqa/ui's
+# .qml, `qmldir` and fonts are already included -- force-including biosqa/ui again made the
+# wheel build abort outright ("A second file is being added ... biosqa/ui/ActivityRail.qml").
+# Do not re-add it. `qmldir` is load-bearing: the Theme singleton does not resolve without it.
 [tool.hatch.build.targets.wheel]
 packages = ["biosqa"]
 
+# The ONNX artifacts + cards live at the repo root (app/models) for the dev checkout and the
+# PyInstaller spec, so they are NOT under the package dir and would otherwise be omitted from
+# the wheel entirely. Map them in as package data; biosqa.main prefers this package-relative
+# copy and falls back to the repo-relative one (see _resolve_models_dir).
 [tool.hatch.build.targets.wheel.force-include]
-"biosqa/ui" = "biosqa/ui"
+"models" = "biosqa/models"
 
 [tool.ruff]
 line-length = 100
