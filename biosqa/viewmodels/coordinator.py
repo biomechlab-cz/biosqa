@@ -302,9 +302,13 @@ class Coordinator(QObject):
             # was graded (no analyzed badge, no plot, no segments, no card) — never the previous
             # recording's analysis wearing this recording's identity.
             self._set_channel_list(handle, modality)
+            self._inference.setPrecision("")          # nothing is loaded: report unknown, not stale
             self._inference.report(f"Model load failed ({modality}): {exc}", "", 0.0)
             return
         card = runner.card
+        # Read off the graph at load time, so the status bar states the precision it is actually
+        # running rather than the hardcoded "FP32" it used to claim.
+        self._inference.setPrecision(getattr(runner, "precision", ""))
 
         # model-card panel + channel list
         try:

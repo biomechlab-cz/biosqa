@@ -8,6 +8,7 @@ app/README.md)."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import numpy as np
@@ -257,3 +258,37 @@ def test_short_stack_still_runs_in_one_batch(tmp_path):
 
     assert runner.predict_windows(windows).shape == (_MAX_BATCH, 4)
     assert sizes == [_MAX_BATCH]
+
+
+# --- the runner must ACTUALLY USE the card's integrity + precision facts ------------------------
+# ModelCard.verify_onnx() was written, tested at the card level, and then never called: the runner
+# opened the session straight after parsing the card, so a swapped or corrupted .onnx loaded happily
+# as long as the card said the right words. These pin the WIRING, which is what was missing.
+
+def test_load_refuses_a_model_whose_digest_does_not_match_the_card(tmp_path):
+    """Swap the .onnx behind a card that declares a digest -> the runner must refuse to open it."""
+    card = dict(VALID_CARD, heads=V2_HEADS)
+    _build_onnx(tmp_path / "ecg.onnx", _v2_outputs())
+    card["onnx_sha256"] = hashlib.sha256((tmp_path / "ecg.onnx").read_bytes()).hexdigest()
+    (tmp_path / "ecg.model_card.json").write_text(json.dumps(card))
+
+    OnnxRunner("ecg", tmp_path).load()                      # honest artifact: loads
+
+    # Swap the artifact behind the card's back. ModelCardError (not an onnxruntime protobuf error)
+    # is what proves the digest is checked BEFORE the session is opened -- refuse to run rather than
+    # predict from an unknown model.
+    (tmp_path / "ecg.onnx").write_bytes(b"not the model the card was written for")
+    with pytest.raises(ModelCardError, match="SHA-256"):
+        OnnxRunner("ecg", tmp_path).load()
+
+
+def test_load_reads_precision_off_the_graph_rather_than_assuming_it(tmp_path):
+    """The status bar used to hardcode "FP32", which was true only by luck. It is now observed."""
+    runner = _runner(tmp_path, dict(VALID_CARD, heads=V2_HEADS), _v2_outputs())
+    assert runner.precision == "FP32"          # this graph carries no INT8 quantization ops
+
+
+def test_a_card_with_no_digest_still_loads_verification_is_skipped_never_faked(tmp_path):
+    """Every card shipped before onnx_sha256 existed carries no digest. They must keep working."""
+    runner = _runner(tmp_path, dict(VALID_CARD, heads=V2_HEADS), _v2_outputs())
+    assert runner.card.onnx_sha256 is None
