@@ -8,7 +8,7 @@
 
 BioSQA Studio opens ECG, PPG, EEG, and EDA recordings, detects the modality, runs a small
 on-device neural quality model over a sliding window, and paints each segment with an ordinal
-quality grade — so you can see, at a glance, which stretches of a recording are trustworthy
+quality grade — so you can see, at a glance, which segments of a recording are trustworthy
 and which are corrupted by motion, electrode noise, baseline wander, or dropout.
 
 Built with **PySide6 (Qt 6) + QML**. Inference runs on the CPU via **ONNX Runtime** — no GPU,

@@ -3,7 +3,7 @@
 Small **synthetic** biosignal recordings for trying the app out — open any of them with **Open recording…**.
 
 Each is a single-channel WFDB file (`.hea` + `.dat`) with a few minutes of deliberately quality-varying
-signal (clean stretches interleaved with motion, baseline wander, muscle/ocular artifact, clipping, dropout).
+signal (clean segments interleaved with motion, baseline wander, muscle/ocular artifact, clipping, dropout).
 The channel is named with a canonical token (`II`, `PLETH`, `Fp1`, `EDA`) so the app auto-detects the modality
 and loads the matching model:
 

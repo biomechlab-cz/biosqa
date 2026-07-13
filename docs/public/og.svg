@@ -7,7 +7,7 @@
     </linearGradient>
   </defs>
   <text x="90" y="180" fill="#E6EAF2" font-family="Inter, sans-serif" font-size="72" font-weight="700">BioSQA Studio</text>
-  <text x="90" y="250" fill="#9AA4B6" font-family="Inter, sans-serif" font-size="34">See which stretches of a recording you can trust — on-device.</text>
+  <text x="90" y="250" fill="#9AA4B6" font-family="Inter, sans-serif" font-size="34">See which segments of a recording you can trust — on-device.</text>
   <path d="M90 430 C 160 300, 200 560, 260 430 S 360 300, 420 430 C 480 540, 540 340, 600 430 S 720 470, 800 430 S 950 420, 1110 430"
         fill="none" stroke="url(#g)" stroke-width="6" stroke-linecap="round"/>
   <g font-family="'JetBrains Mono', monospace" font-size="26" fill="#626C7E">

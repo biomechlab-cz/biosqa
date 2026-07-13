@@ -256,8 +256,8 @@ Popup {
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
                 text: "Window length is fixed by each model (ECG 10 s @ 250 Hz) and can't be changed here — "
                       + "overlap sets the stride, so 50% steps a half-window at a time for finer segment "
-                      + "boundaries. Adjacent windows of the same grade are merged into one segment, so uniform "
-                      + "stretches show as a single long band."
+                      + "boundaries. Adjacent windows of the same grade are merged into one segment, so a "
+                      + "uniformly graded region shows as a single long band."
                 color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 11
             }
 
