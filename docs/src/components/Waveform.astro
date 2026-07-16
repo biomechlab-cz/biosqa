@@ -30,7 +30,7 @@ const dotColor = (p: number) => (p < 0.30 ? 'var(--q0)' : p < 0.5 ? 'var(--q1)' 
         <stop offset="0.62" stop-color="#35D0BA" /><stop offset="1" stop-color="#1C8F80" />
       </linearGradient>
     </defs>
-    <path class="wfm-line" d={path} fill="none" stroke="url(#wfm-grad)" stroke-width="1.6"
+    <path class="wfm-line" d={path} pathLength="1000" fill="none" stroke="url(#wfm-grad)" stroke-width="1.6"
           stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />
   </svg>
   <div class="wfm-dots" aria-hidden="true">
@@ -43,7 +43,7 @@ const dotColor = (p: number) => (p < 0.30 ? 'var(--q0)' : p < 0.5 ? 'var(--q1)' 
 <style>
   .wfm { display: grid; gap: 16px; }
   .wfm-svg { width: 100%; height: 148px; display: block; }
-  .wfm-line { stroke-dasharray: 2600; stroke-dashoffset: 2600; animation: wfm-draw 1.5s cubic-bezier(.4,0,.2,1) .15s forwards; }
+  .wfm-line { stroke-dasharray: 1000; stroke-dashoffset: 1000; animation: wfm-draw 1.5s cubic-bezier(.4,0,.2,1) .15s forwards; }
   .wfm-dots { display: flex; gap: 4px; }
   .wfm-dot { flex: 1; height: 5px; border-radius: 100px; opacity: 0; animation: wfm-fade .5s ease forwards; }
   @keyframes wfm-draw { to { stroke-dashoffset: 0; } }

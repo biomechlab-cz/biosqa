@@ -180,8 +180,6 @@ The biosignal signal-quality models in this project were trained on the public d
 - **EDABE** — native per-sample binary expert artifact mask; Llanes-Jurado et al. (2023), *Expert Systems with Applications* 230:120581, https://doi.org/10.1016/j.eswa.2023.120581. Dataset: Zenodo, https://doi.org/10.5281/zenodo.7248134.
 - **WESAD (wrist EDA)** — derived quality from wrist-accelerometer motion; Schmidt et al. (2018), *ICMI '18*, https://doi.org/10.1145/3242969.3242985.
 
-*These datasets were used to **train** the signal-quality models; each retains its own license and usage terms — consult the original source before use or redistribution. Access-restricted source requiring explicit approval: **TUAR / TUH EEG** (Temple University registration and data agreement). OpenNeuro sets are CC0; most PhysioNet sets are openly licensed under attribution terms.*
-
 ## Acknowledgements & licenses
 
 BioSQA Studio is released under the **MIT License** (see [`LICENSE`](LICENSE)).
