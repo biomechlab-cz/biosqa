@@ -49,6 +49,8 @@ Normalization, window length, and any second model input all come from the card 
 
 For dual-branch and fusion models, the host computes the **second input exactly as the card specifies** — the spectral channels or the feature vector are constructed to the card's declaration, not to a hard-coded recipe.
 
+> **EEG grade note.** EEG signal-quality grading is inherently the hardest of the four modalities. The shipped EEG grade + usable heads are trained only on the cohorts with expert per-window artifact annotation (TUAR, PhysioMotion), with confidence-based label cleaning; the artifact-type head uses all cohorts. Treat the EEG grade as advisory and lean on the usable gate and the artifact chips.
+
 > Feed **raw** signals. Preprocessing is the model's job, described by its card. A pre-filtered-but-corrupt signal can be under-flagged because the artifacts the model is trained to catch have already been partly smoothed away.
 
 ## Fail-loud contract

@@ -18,8 +18,6 @@ from dataclasses import replace
 
 import numpy as np
 
-from biosqa.inference.conformal import temperature_scale
-
 __all__ = [
     "sanitize_probs",
     "calibrate_grade_probs",
@@ -54,22 +52,16 @@ def calibrate_grade_probs(q_probs, card):
     user-facing UQ surface — confidence, entropy-uncertainty, APS prediction set — is derived from
     the SAME calibrated distribution the conformal threshold was fit on. Monotonic, so the tiers
     (argmax) are unchanged; a uniform (ungradeable) row stays uniform."""
-    p, non_finite = sanitize_probs(q_probs)
-    t = float(getattr(card, "grade_temperature", 1.0) or 1.0)
-    if t != 1.0 and p.shape[0]:
-        p = temperature_scale(p, t)
-    return p, non_finite
+    del card
+    return sanitize_probs(q_probs)
 
 
 def calibrate_prediction(pred, card):
-    """A calibrated COPY of a whole multi-head prediction: the ordinal grade head scaled by the card's
-    ``grade_temperature`` and the binary usable head by its ``usable_temperature`` (every shipped card
-    calibrates both; the usable one was previously loaded and never applied). The multilabel artifact
-    head is independent sigmoids, not a distribution, so it is left untouched.
+    """Return a sanitized copy of graph-calibrated grade and usable probabilities.
 
-    ``usable_temperature`` is read with ``getattr`` so a card object that predates the property still
-    works (identity, not a guess). A prediction that is not the dataclass carrier (a test double) is
-    returned unchanged rather than reconstructed."""
+    Model-card temperatures document the constants baked into the ONNX graph; the application never
+    reapplies them. The multilabel artifact head is independent sigmoids and is left untouched.
+    A non-dataclass test double is returned unchanged rather than reconstructed."""
     per_head = getattr(pred, "per_head", None)
     if not isinstance(per_head, dict):
         return pred
@@ -81,9 +73,7 @@ def calibrate_prediction(pred, card):
         if head.kind == "ordinal":
             out[head.name] = calibrate_grade_probs(probs, card)[0]
         elif head.kind == "binary":
-            t = float(getattr(card, "usable_temperature", 1.0) or 1.0)
-            p, _nf = sanitize_probs(probs)
-            out[head.name] = temperature_scale(p, t) if t != 1.0 and p.shape[0] else p
+            out[head.name] = sanitize_probs(probs)[0]
     try:
         return replace(pred, per_head=out)
     except TypeError:  # noqa: BLE001 - not a dataclass carrier; the raw prediction is still valid

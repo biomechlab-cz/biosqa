@@ -45,13 +45,13 @@ def _ecg_runner():
 
 
 class _Card:
-    """Minimal card stand-in: only the calibration constants postprocess reads."""
-    grade_temperature = 0.4       # the SHIPPED ecg grade temperature
+    """Temperatures are provenance for constants already baked into the graph."""
+    grade_temperature = 0.4
     heads = ()
 
 
-# ---- shared calibration (postprocess): the one place both paths derive numbers from ----------
-def test_calibrate_grade_probs_applies_the_card_temperature():
+# ---- shared sanitation (graph outputs are already calibrated exactly once) -------------------
+def test_calibrate_grade_probs_does_not_reapply_card_temperature():
     from biosqa.inference.postprocess import (
         calibrate_grade_probs, confidences_from, normalized_entropy,
     )
@@ -59,10 +59,9 @@ def test_calibrate_grade_probs_applies_the_card_temperature():
     raw = np.array([[0.10, 0.20, 0.45, 0.25]])
     p, non_finite = calibrate_grade_probs(raw, _Card())
     assert not non_finite.any()
-    assert p.argmax(axis=1) == raw.argmax(axis=1)              # monotone: the TIER never moves
-    # the calibrated numbers, not the raw softmax (which reads conf 0.450 / unc 0.907)
-    assert round(float(confidences_from(p, non_finite)[0]), 3) == 0.722
-    assert round(float(normalized_entropy(p)[0]), 3) == 0.596
+    assert np.allclose(p, raw)  # ONNX already applied the card temperature
+    assert round(float(confidences_from(p, non_finite)[0]), 3) == 0.450
+    assert round(float(normalized_entropy(p)[0]), 3) == 0.907
 
 
 def test_calibrate_grade_probs_fails_safe_on_a_non_finite_row():
