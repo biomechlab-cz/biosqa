@@ -11,8 +11,8 @@
   "normalization": {
     "method": "none"
   },
-  "training_data_hash": "eeg-multihead-store_v5",
-  "model_version": "v4-multihead-grade-usable-type",
+  "training_data_hash": "eeg-multihead-store_v8-expert-grade",
+  "model_version": "v5-multihead-expert-grade-cleaned",
   "inputs": [
     "x_raw",
     "x_feat"
@@ -96,194 +96,39 @@
     }
   ],
   "calibration": {
+    "location": "onnx_graph",
     "temperatures": {
-      "grade": 0.45,
-      "usable": 2.95
+      "grade": 0.55,
+      "usable": 5.6846
     },
+    "fit_partition": "validation",
+    "evaluation_partition": "test",
     "grade_ece": [
-      0.1969,
-      0.0674
+      0.1269,
+      0.0598
     ],
     "usable_ece": [
-      0.1193,
-      0.0288
-    ]
+      0.1632,
+      0.0529
+    ],
+    "optimization_ece": {
+      "grade": [
+        0.134,
+        0.0342
+      ],
+      "usable": [
+        0.1668,
+        0.0309
+      ]
+    }
   },
   "routing": "grade+usable+type <- raw trunk fused with host combined vector; grade = ordinal ordered-logit; type = multilabel",
-  "input_contract": {
-    "expects": "raw device-native signal (unfiltered)",
-    "reports": "quality of the signal AS PROVIDED \u2014 if the input was pre-filtered, this is the post-filter quality",
-    "caveat": "a pre-filtered but still-corrupted signal can be under-flagged (false-clean): an aggressive low-pass/band-limit strips the high-frequency cues the model keys on. The app runs biosqa.inference.prefilter.detect_prefiltering() to warn when the input looks pre-filtered."
-  },
-  "novelty": {
-    "method": "mahalanobis_sqi",
-    "feature_names": [
-      "Aperiodic 1/f",
-      "Spec. entropy",
-      "Hjorth comp.",
-      "Kurtosis",
-      "Line 50/60",
-      "HF fraction"
+  "grade_training": {
+    "cohorts": [
+      "TUAR",
+      "PhysioMotion"
     ],
-    "mean": [
-      -1.33726,
-      0.86227,
-      7.81265,
-      3.698567,
-      0.031036,
-      0.097112
-    ],
-    "std": [
-      0.848002,
-      0.074734,
-      13.539716,
-      5.438848,
-      0.071236,
-      0.14962
-    ],
-    "inv_corr": [
-      [
-        1.691167,
-        0.150273,
-        0.232569,
-        0.068025,
-        0.300863,
-        -1.084259
-      ],
-      [
-        0.150273,
-        1.527484,
-        0.036898,
-        0.618406,
-        -0.253826,
-        0.554736
-      ],
-      [
-        0.232569,
-        0.036898,
-        1.090969,
-        0.046885,
-        0.078288,
-        0.076654
-      ],
-      [
-        0.068025,
-        0.618406,
-        0.046885,
-        1.279599,
-        -0.003968,
-        0.021122
-      ],
-      [
-        0.300863,
-        -0.253826,
-        0.078288,
-        -0.003968,
-        1.578,
-        -1.146297
-      ],
-      [
-        -1.084259,
-        0.554736,
-        0.076654,
-        0.021122,
-        -1.146297,
-        2.523163
-      ]
-    ],
-    "d2_threshold": 63.2459,
-    "reference": "data/store_v6 n=6000"
-  },
-  "feature_attribution": {
-    "feature_fn": "combined_vector",
-    "feature_names": [
-      "eeg_low_ratio",
-      "eeg_high_ratio",
-      "eeg_gamma_ratio",
-      "eeg_tilt",
-      "eeg_flatness",
-      "eeg_line_index",
-      "eeg_aperiodic_slope",
-      "eeg_zcr",
-      "eeg_kurt",
-      "eeg_max_grad",
-      "eeg_flatline_frac",
-      "eeg_hjorth_mob",
-      "eeg_hjorth_comp",
-      "sk_max",
-      "sk_mean",
-      "sk_flat",
-      "disp_ent",
-      "rqa_det",
-      "rqa_mean_diag",
-      "rqa_long_diag",
-      "jump_ratio",
-      "bv_rv_ratio",
-      "op_forbidden",
-      "op_self_trans",
-      "op_trans_ent",
-      "cpp",
-      "cqi"
-    ],
-    "reference_mean": [
-      0.5296491772110263,
-      0.21668592399089054,
-      0.09750435128931227,
-      1.335957223197329,
-      0.32679549149028025,
-      922.5497714826266,
-      -1.9288124421833392,
-      0.11244201201836888,
-      0.3569203797020406,
-      1.4766558414883912,
-      0.007898358090703066,
-      0.3636142221208041,
-      7.68004874809583,
-      2.803630164484183,
-      0.36595290801401037,
-      0.022723272359954156,
-      0.7328260326484839,
-      0.8194585518836975,
-      4.125545204480489,
-      1.0,
-      0.005532146246650276,
-      1.0449610110521317,
-      0.0,
-      0.2635557295704881,
-      0.9349643742243449,
-      0.06618086602538824,
-      4.502535125096639
-    ],
-    "reference_std": [
-      0.2857777612872923,
-      0.2075646506085999,
-      0.09870778089874799,
-      2.809835675073096,
-      0.16208084493939495,
-      8002.431864907672,
-      1.064277484168494,
-      0.09226091562375711,
-      3.943149416024299,
-      1.4391573779550353,
-      0.016535588116346665,
-      0.27100068201424893,
-      13.592010379132848,
-      3.8787290005973776,
-      1.2308096618297677,
-      0.10407881578170158,
-      0.12999226001119576,
-      0.07168949286297502,
-      1.5612057521457303,
-      0.0,
-      0.024989659753303348,
-      0.06400854563399269,
-      0.0,
-      0.11121419176979881,
-      0.042195951038772106,
-      0.008916478152583665,
-      0.5912596787116708
-    ],
-    "reference_tier": "Q3",
-    "n_windows": 1500
+    "expert_test_qwk": 0.3372,
+    "note": "grade+usable trained only on signal-descriptive expert cohorts (TUAR, PhysioMotion) with confident-learning label cleaning; the type head trains on all cohorts. Proxy/condition-derived cohorts lack a native ordinal quality scale."
   }
 }
