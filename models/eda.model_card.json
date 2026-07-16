@@ -79,6 +79,7 @@
     }
   ],
   "calibration": {
+    "location": "onnx_graph",
     "temperatures": {
       "grade": 0.75,
       "usable": 3.0

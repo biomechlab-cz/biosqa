@@ -218,6 +218,8 @@ def write_model_card(
         "heads": heads,
     }
     if calibration is not None:
+        calibration = dict(calibration)
+        calibration.setdefault("location", "onnx_graph")
         card["calibration"] = calibration
     if ood is not None:
         card["ood"] = ood
