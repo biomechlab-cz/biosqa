@@ -19,7 +19,7 @@ from pathlib import Path
 from threading import Event
 
 import numpy as np
-from PySide6.QtCore import QObject, QThreadPool, QTimer, Slot
+from PySide6.QtCore import QCoreApplication, QObject, QThreadPool, QTimer, Slot
 
 from biosqa.inference.onnx_runner import OnnxRunner
 from biosqa.io.loaders import RecordingHandle, read_window
@@ -29,6 +29,8 @@ from biosqa.workers.qt_threads import (
     SaliencyTask,
     InferenceTask,
     LoadResampleTask,
+    SqiTask,
+    SqiWorkerSignals,
     StreamInferenceTask,
     resample_signal,
 )
@@ -90,6 +92,10 @@ class Coordinator(QObject):
         self._carriers: list[InferenceWorkerSignals] = []  # keep signal carriers alive
         self._audit_carriers: list[AuditWorkerSignals] = []
         self._saliency_carriers: list[SaliencyWorkerSignals] = []
+        self._sqi_carriers: list[SqiWorkerSignals] = []
+        #: span (start_sec, end_sec) of the most recent SQI request — the fallback "what is on screen"
+        #: for the SQI result guard when no segment is selected (see :meth:`_live_sqi_span`).
+        self._sqi_span: tuple[float, float] | None = None
         self._selection_gen = 0   # bumped on each segment select; a saliency result from an old selection is dropped
         self._load_carriers: list[LoadResampleWorkerSignals] = []
         self._stream_carriers: list[StreamWorkerSignals] = []
@@ -104,6 +110,9 @@ class Coordinator(QObject):
         self._analyzed: tuple[str, str, int] | None = None
         self._plot_channels: list[str] = []   # lane order, analyzed channel first
         self._dropped_reviews = 0             # reviews an in-progress re-run of the SAME record dropped
+        #: the last segmentation status line ``(text, model_version, latency_ms)``. The streaming
+        #: notice APPENDS to it instead of replacing it (see :meth:`_on_notice`).
+        self._last_status: tuple[str, str, float] = ("", "", 0.0)
         self._guard_reports: dict[str, dict] = {}          # modality -> latest guard report
         # Generation guards: every task carrier is stamped with the generation it was dispatched
         # under; a result whose stamp is stale (a newer open / re-run superseded it) is DROPPED, so
@@ -112,6 +121,9 @@ class Coordinator(QObject):
         self._inference_gen = 0    # bumped on every inference dispatch (guards intervals/guard/notice)
         #: cooperative cancel token of the IN-FLIGHT inference/stream (see :meth:`_new_cancel_token`).
         self._infer_cancel: Event | None = None
+        #: set once on quit. Every AuditTask carries it, so a queued audit on the single-threaded audit
+        #: pool cannot start a fresh (up to samples x timeout) ollama round trip during teardown.
+        self._quitting: Event = Event()
         if selection is not None and hasattr(selection, "attach_segments"):
             selection.attach_segments(segments)
         # Bump the selection generation from the AUTHORITATIVE selection signal, so a saliency result from a
@@ -144,6 +156,26 @@ class Coordinator(QObject):
             if sig is not None:
                 sig.connect(self._schedule_rerun_normal)
         recordings.recordingOpened.connect(self.on_recording_opened)
+        # Quit was not a synchronisation point: nothing cancelled in-flight work, and QThreadPool's
+        # DESTRUCTOR then waits for it — so the window disappeared while the process lived on for the
+        # rest of a streamed whole-record read or an ollama timeout (measured 32.6 s of zombie for a
+        # 20 s task). Cancel first, then drain with a bound, while the app is still alive.
+        qapp = QCoreApplication.instance()
+        if qapp is not None:
+            qapp.aboutToQuit.connect(self.shutdown)
+
+    #: how long a quit waits for the cancelled workers to return before giving up on them (ms).
+    SHUTDOWN_WAIT_MS = 3000
+
+    @Slot()
+    def shutdown(self) -> None:
+        """Cancel every in-flight worker and drain the pools (bounded). Wired to ``aboutToQuit``, and
+        idempotent — the cooperative tasks return at their next phase / streamed-block boundary."""
+        self._quitting.set()
+        self._cancel_inflight()
+        self._rerun_timer.stop()
+        self._pool.waitForDone(self.SHUTDOWN_WAIT_MS)
+        self._audit_pool.waitForDone(self.SHUTDOWN_WAIT_MS)
 
     @staticmethod
     def _prune(carriers: list, attr: str, current: int) -> list:
@@ -182,8 +214,21 @@ class Coordinator(QObject):
 
     def _stale(self, gen_attr: str, current: int) -> bool:
         """True if the emitting carrier's generation stamp (``gen_attr``) is not ``current`` — i.e. a
-        newer open / re-run has superseded it, so this result must be ignored."""
-        return getattr(self.sender(), gen_attr, current) != current
+        newer open / re-run has superseded it, so this result must be ignored.
+
+        FAILS CLOSED. A superseded carrier is dropped from its list (``_prune``) and then collected,
+        so by the time its already-queued signal is delivered ``sender()`` can be None — under the old
+        ``getattr(self.sender(), attr, current)`` that defaulted to ``current`` and the check
+        degenerated to ``current != current`` -> NOT stale, i.e. exactly the superseded results the
+        guard exists to reject were the ones it let through. An unidentifiable sender is stale."""
+        s = self.sender()
+        return s is None or getattr(s, gen_attr, None) != current
+
+    def _stale_payload(self, payload, gen_attr: str, current: int) -> bool:
+        """Like :meth:`_stale` but prefers a generation stamp CARRIED IN THE PAYLOAD, which cannot go
+        missing with the carrier. Falls back to the sender for payloads that carry none."""
+        gen = payload.get(gen_attr) if isinstance(payload, dict) else None
+        return (gen != current) if gen is not None else self._stale(gen_attr, current)
 
     def _new_cancel_token(self) -> Event:
         """CANCEL whatever inference/stream is in flight and return a FRESH token for the run about
@@ -219,6 +264,7 @@ class Coordinator(QObject):
         self._current = None
         self._current_stream = None
         self._plot_channels = []
+        self._last_status = ("", "", 0.0)
         self._guard_reports.clear()
         self._pending.clear()
         self._segments.load_intervals([])          # the segment model had no other reset path at all
@@ -248,6 +294,7 @@ class Coordinator(QObject):
         self._stream_carriers = self._prune(self._stream_carriers, "_rgen", rgen)
         self._audit_carriers = self._prune(self._audit_carriers, "_rgen", rgen)
         self._saliency_carriers = self._prune(self._saliency_carriers, "_rgen", rgen)
+        self._sqi_carriers = self._prune(self._sqi_carriers, "_rgen", rgen)
         self._carriers = self._prune(self._carriers, "_igen", igen)
 
     def _blank_model_card(self) -> None:
@@ -352,7 +399,7 @@ class Coordinator(QObject):
                                                  list(self._plot_channels), modality, runner,
                                                  overlap, carrier,
                                                  refine_enabled=self._refine_enabled(),
-                                                 cancel=self._new_cancel_token()))
+                                                 cancel=self._new_cancel_token(), gen=rgen))
             return
         self._inference.report(f"Loading {modality.upper()}…", card.model_version, 0.0)
         carrier = LoadResampleWorkerSignals()
@@ -360,14 +407,17 @@ class Coordinator(QObject):
         carrier.ready.connect(self._on_loaded)
         carrier.failed.connect(self._on_load_failed)
         self._load_carriers.append(carrier)
+        # A superseded load must STOP (it reads + resamples the whole channel), and the generation
+        # travels in the payload so the staleness check never depends on this carrier still existing.
         self._pool.start(LoadResampleTask(handle, infer_ch, infer_ch, list(self._plot_channels),
-                                          float(card.fs_hz), modality, carrier))
+                                          float(card.fs_hz), modality, carrier,
+                                          cancel=self._new_cancel_token(), gen=rgen))
 
     @Slot(object)
     def _on_loaded(self, payload) -> None:
         """LoadResampleTask finished off-thread: bind the plot from the precomputed cache, keep the
         resampled signal for audit/re-run, then dispatch inference — all back on the GUI thread."""
-        if self._stale("_rgen", self._recording_gen):
+        if self._stale_payload(payload, "_rgen", self._recording_gen):
             return                                # a newer open superseded this load
         modality = payload["modality"]
         sig = payload["sig"]
@@ -386,7 +436,7 @@ class Coordinator(QObject):
     def _on_stream_plot(self, payload) -> None:
         """Streamed (large) recording: bind the block-wise plot cache; keep the handle/channel so
         on-demand audit can re-read the selected window (there is no in-memory signal)."""
-        if self._stale("_rgen", self._recording_gen):
+        if self._stale_payload(payload, "_rgen", self._recording_gen):
             return
         modality = payload["modality"]
         self._current = None
@@ -407,7 +457,12 @@ class Coordinator(QObject):
             return
         if self._guard is not None and hasattr(self._guard, "reset"):
             self._guard.reset()   # streaming mode has no guard/recovery report to show
-        self._inference.report(message, "", 0.0)
+        # APPEND to the segmentation status rather than replace it: the notice lands right after
+        # `_on_intervals` on the streaming path, and reporting it alone erased the segment count, the
+        # model version, the latency AND the "N reviews dropped by re-segmentation" warning — so the
+        # recordings whose analysis takes longest were the only ones that never reported it.
+        status, version, latency = self._last_status
+        self._inference.report(f"{status} · {message}" if status else message, version, latency)
 
     def _report_if_too_short(self, modality: str, sig, card, overlap: float) -> bool:
         """True (and the UI says so) when the signal is shorter than ONE model window.
@@ -549,6 +604,12 @@ class Coordinator(QObject):
         self._dropped_reviews = 0
         self._segments.load_intervals(intervals)
         t0, n_windows = self._pending.get(modality, (None, 0))
+        if not n_windows:
+            # STREAMED path: the window count cannot be known at dispatch (the record is scored block
+            # by block), so both streaming dispatch sites record 0 and the task stamps the REAL count
+            # on its carrier when it finishes. Reading it here is what keeps `latencyMs` from being a
+            # flat 0.0 on exactly the recordings whose analysis takes longest.
+            n_windows = int(getattr(self.sender(), "_n_windows", 0) or 0)
         latency = 0.0
         if t0 is not None and n_windows > 0:
             latency = (time.perf_counter() - t0) * 1000.0 / n_windows
@@ -558,6 +619,7 @@ class Coordinator(QObject):
         status = f"{modality.upper()} · {n} segments"
         if dropped:
             status += (f" · {dropped} review{'s' if dropped != 1 else ''} dropped by re-segmentation")
+        self._last_status = (status, version, latency)   # a streaming notice appends to this
         self._inference.report(status, version, latency)
 
     @Slot(str, object)
@@ -604,7 +666,8 @@ class Coordinator(QObject):
         s = self._settings
         kw = ({"model": s.auditModel, "host": s.ollamaHost, "samples": s.auditSamples}
               if s is not None else {})
-        self._audit_pool.start(AuditTask(runner, window, model_grade, guard, carrier, **kw))
+        self._audit_pool.start(AuditTask(runner, window, model_grade, guard, carrier,
+                                         cancel=self._quitting, **kw))
 
     @Slot(float, float)
     def _on_saliency_requested(self, start_sec: float, end_sec: float) -> None:
@@ -630,7 +693,9 @@ class Coordinator(QObject):
         self._saliency_carriers = [c for c in self._saliency_carriers if c is not sender]  # free the carrier
         # drop a late result whose recording OR segment selection has since changed — else it would paint
         # the old segment's heatmap over the newly-selected trace (misaligned attribution overlay).
-        if self._stale("_rgen", self._recording_gen) or getattr(sender, "_sgen", -1) != self._selection_gen:
+        # Fails closed with _stale: no identifiable sender means no identifiable selection either.
+        if (sender is None or self._stale("_rgen", self._recording_gen)
+                or getattr(sender, "_sgen", None) != self._selection_gen):
             return
         if self._guard is not None:
             self._guard.setSaliency(payload)
@@ -642,8 +707,13 @@ class Coordinator(QObject):
 
     @Slot(float, float)
     def _on_sqi_requested(self, start_sec: float, end_sec: float) -> None:
-        """Compute the interpretable classical-SQI breakdown for the selected window (research3
-        explainability) and push it to the guard. Cheap (pure numpy); off the decision path."""
+        """Dispatch the interpretable classical-SQI breakdown for the selected window (research3
+        explainability) OFF the GUI thread and push the result to the guard when it lands.
+
+        It used to run inline on a DIRECT connection between two GUI-thread objects — and it is not
+        cheap: the whole bank runs twice (raw + band-pass-filtered) over the selected span, which on a
+        long single-segment record is the whole record. Measured ~10-20 s of frozen window per
+        selection. Same shape as :meth:`_on_saliency_requested` now."""
         if self._guard is None:
             return
         got = self._audit_window(start_sec, end_sec)
@@ -652,28 +722,57 @@ class Coordinator(QObject):
             self._guard.setUsability([])          # keep both panels in lock-step (don't leave stale bands)
             return
         modality, runner, window = got
-        fs = float(runner.card.fs_hz)
-        try:
-            from biosqa.inference.sqi_breakdown import sqi_breakdown, sqi_consensus
-            rows = sqi_breakdown(window, fs, modality)
-            # the SAME bank on a band-pass-filtered copy (Raw/Filtered toggle): shows what a standard
-            # filter would/would not fix — e.g. baseline wander clears, in-band EMG does not.
-            filt_rows = []
+        carrier = SqiWorkerSignals()
+        carrier._rgen = self._recording_gen  # type: ignore[attr-defined]  # drop if a new record opens
+        # Stamp the SPAN this bank is being computed for, not a selection COUNTER. QML requests the SQI
+        # from the same `selectedSegmentChanged` signal that bumps `_selection_gen`, and QML's handler
+        # runs FIRST, so a counter stamped here is always one behind the live one and every
+        # selection-driven result was rejected as stale (both panels permanently empty). The span is
+        # order-independent: a result for the span that is on screen is fresh however the signals raced.
+        carrier._span = (float(start_sec), float(end_sec))  # type: ignore[attr-defined]
+        self._sqi_span = carrier._span   # most recent request (the live span when nothing is selected)
+        carrier.sqiReady.connect(self._on_sqi_ready)
+        self._sqi_carriers.append(carrier)
+        self._pool.start(SqiTask(window, float(runner.card.fs_hz), modality, carrier))
+
+    #: tolerance (seconds) when matching an SQI result's span against the span on screen.
+    _SPAN_EPS = 1e-6
+
+    def _live_sqi_span(self) -> tuple[float, float] | None:
+        """The span the SQI panels are meant to be describing: the SELECTED segment's bounds, or —
+        when nothing is selected (a direct/programmatic ``requestSqi``) — the most recent request."""
+        selection = self._selection
+        sel = getattr(selection, "selectedSegment", None) if selection is not None else None
+        if sel is not None:
             try:
-                from biosqa.inference.recover import filter_for_modality
-                filt_rows = sqi_breakdown(filter_for_modality(window, fs, modality), fs, modality)
-            except Exception:  # noqa: BLE001 - filtered view is advisory
-                filt_rows = []
-            consensus = sqi_consensus(rows)          # consensus is on the RAW bank (what the model saw)
-        except Exception:  # noqa: BLE001
-            rows, filt_rows, consensus = [], [], 0.0
-        self._guard.setSqiBreakdown(rows, filt_rows, consensus)
-        # per-modality "usable for what" verdicts (EEG per-band, EDA tonic/phasic) for the same window
-        try:
-            from biosqa.inference.task_usability import usability_verdicts
-            self._guard.setUsability(usability_verdicts(window, fs, modality))
-        except Exception:  # noqa: BLE001
-            self._guard.setUsability([])
+                return float(sel.startSec), float(sel.endSec)
+            except Exception:  # noqa: BLE001 - a stand-in without the properties: fall through
+                return None
+        return self._sqi_span
+
+    def _stale_sqi_span(self, span) -> bool:
+        """True if ``span`` is not the span on screen — fails CLOSED (an unidentifiable span, or no
+        span to compare it against, cannot be shown to belong to what the user is looking at)."""
+        live = self._live_sqi_span()
+        if span is None or live is None:
+            return True
+        return (abs(span[0] - live[0]) > self._SPAN_EPS
+                or abs(span[1] - live[1]) > self._SPAN_EPS)
+
+    @Slot(object)
+    def _on_sqi_ready(self, payload) -> None:
+        sender = self.sender()
+        self._sqi_carriers = [c for c in self._sqi_carriers if c is not sender]   # free the carrier
+        # Fail-closed recording + SPAN guard: a breakdown computed for a span that is no longer the
+        # selected one describes a different stretch of a possibly different record.
+        if (sender is None or self._stale("_rgen", self._recording_gen)
+                or self._stale_sqi_span(getattr(sender, "_span", None))):
+            return
+        if self._guard is None:
+            return
+        self._guard.setSqiBreakdown(payload.get("rows", []), payload.get("filtered", []),
+                                    float(payload.get("consensus", 0.0)))
+        self._guard.setUsability(payload.get("usability", []))
 
     def _audit_window(self, start_sec: float, end_sec: float):
         """Return ``(modality, runner, window[np.float32])`` for the selected span, from the

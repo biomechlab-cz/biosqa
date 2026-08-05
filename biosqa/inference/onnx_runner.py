@@ -21,6 +21,7 @@ from biosqa.model.model_card import (
     ModelCard,
     ModelCardError,
     load_model_card,
+    sha256_file,
     validate_onnx_input_shape,
 )
 
@@ -109,6 +110,7 @@ class OnnxRunner:
         self.models_dir = Path(models_dir)
         self.card: ModelCard | None = None
         self.precision: str = ""          # "FP32"/"INT8", read off the graph at load(); "" until then
+        self.onnx_sha256: str = ""        # digest of the artifact actually loaded; "" until load()
         self._session: "ort.InferenceSession | None" = None
         self._input_name: str | None = None
         self._spec_input_name: str | None = None  # 2nd input for dual-branch models (spectral channels)
@@ -140,9 +142,13 @@ class OnnxRunner:
                 f"— the filename and the card disagree on the signal type"
             )
         # Model identity is otherwise a free-text label: a swapped or corrupted .onnx would load happily
-        # as long as the card said the right words. No-op for a card carrying no digest; hard failure on
-        # a mismatch. Refuse to run rather than predict from an unknown model.
+        # as long as the card said the right words. The structural checks below (modality / L_m / head
+        # names / head widths) catch a different-ARCHITECTURE swap but not a same-architecture one --
+        # app/dist/.../eeg.onnx is a v4 graph of the same size (2,298,439) and the same shape contract
+        # as the v5 app/models/eeg.onnx, and only the digest tells them apart. Runs BEFORE the ORT
+        # session opens: refuse to load rather than predict from an unknown model.
         self.card.verify_onnx(onnx_path)
+        self.onnx_sha256 = sha256_file(onnx_path)
         self.precision = _graph_precision(onnx_path)
 
         # ORT defaults intra_op to the core count. The app runs inference on a shared QThreadPool
@@ -281,9 +287,19 @@ class OnnxRunner:
             return self._session.run(None, {self._input_name: batch, self._feat_input_name: feat.astype(np.float32)})
         if self._spec_input_name is None:
             return self._session.run(None, {self._input_name: batch})
-        # 2-input dual-branch: compute spectral channels on the PER-WINDOW z-scored signal
-        # (band power is scale-dependent -> match the training normalization; the graph then
-        # z-scores both inputs again). x_raw is fed raw (its instance-norm is scale-invariant).
+        # 2-input dual-branch: compute spectral channels on the PER-WINDOW z-scored signal.
+        #
+        # This is a DELIBERATE convention, and it is not the training-time one: the export script
+        # computed x_spec on the raw store array, which carried that store's record-level scale. The
+        # card declares normalization.method='none', so the app has no such scale to reproduce -- it
+        # holds raw file units (mV/uV/uS), and log1p(band power) is not affine in gain, so feeding
+        # those straight in would put the spectral branch at an arbitrary, unit-dependent offset that
+        # the graph's baked instance-norm cannot absorb. A per-window z-score is the scale-invariant
+        # choice. Measured cost of the gap on the store's ECG test split: the grade head is
+        # bit-identical (it reads x_raw only), usable AUROC 0.8685 -> 0.8608, artifact-type macro-F1
+        # 0.3829 -> 0.3820. PINNED by tests/test_inference_conventions.py so it can only change on
+        # purpose -- the deployment-parity harness compares the GRADE softmax only and is therefore
+        # structurally blind to any skew on this second input.
         from biosqa.inference.spectral import spectral_band_channels
         p = self._spec_params or {}
         zb = (batch - batch.mean(-1, keepdims=True)) / (batch.std(-1, keepdims=True) + 1e-6)
@@ -433,9 +449,14 @@ class OnnxRunner:
         fs = float(self.card.fs_hz)
         pf = detect_prefiltering(signal, fs, self.modality)
         windows = make_windows(signal, self.card, overlap=overlap)
-        if len(windows) == 0:
+        # integrity_guard ANDs its verdict with prefilter_verdict.prefiltered, so on a raw-looking
+        # record the per-window mask is provably all-False and nothing else of the verdict is kept.
+        # Computing it anyway costs 2.28 ms/window -- ~2.9x the ONNX forward it accompanies, i.e. ~15 s
+        # on a 6400-window record, re-paid every time a setting change re-runs inference.
+        if len(windows) == 0 or not pf.prefiltered:
             return {"prefiltered": pf.prefiltered, "reasons": pf.reasons,
-                    "override_mask": np.zeros(0, dtype=bool), "n_overridden": 0, "score": pf.score}
+                    "override_mask": np.zeros(len(windows), dtype=bool), "n_overridden": 0,
+                    "score": pf.score}
         if prediction is None:
             prediction = self.predict_windows_multihead(np.stack(
                 [normalize_window(w, self.card.normalization) for w in windows]))

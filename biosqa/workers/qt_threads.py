@@ -9,8 +9,11 @@ level way to forbid it).
 
 from __future__ import annotations
 
+import logging
+import re
+
 import numpy as np
-from PySide6.QtCore import QRunnable
+from PySide6.QtCore import QObject, QRunnable, Signal
 
 from biosqa.inference.data_quality import record_quality
 from biosqa.inference.llm_audit import audit_segment
@@ -37,8 +40,42 @@ from biosqa.workers.signals import (
     TranscodeWorkerSignals,
 )
 
+_log = logging.getLogger(__name__)
+
 #: cap on the in-memory full-resolution plot cache (matches SignalViewController.loadTrace).
 _PLOT_CACHE_CAP = 400000
+
+#: the ONLY ``RuntimeError`` :func:`_emit` swallows: the carrier's C++ side is gone. PySide raises
+#: ``'Signal source has been deleted'`` from ``emit()``; ``'Internal C++ object (X) already deleted.'``
+#: is the sibling wording for a carrier collected a moment earlier. Everything else propagates.
+_CARRIER_GONE = re.compile(r"(has been|already) deleted", re.IGNORECASE)
+
+#: how far :func:`resample_ratio`'s cheap 1000-denominator approximation may miss the true rate ratio
+#: before it escalates. 1e-4 is 0.36 s of drift per hour, far below any segment boundary the app draws,
+#: so every ratio that was already accurate keeps its exact historical ``(up, down)`` -- and the pairs
+#: that miss by 25%-100% (see :func:`resample_ratio`) are re-derived instead of shipped.
+_RATIO_REL_TOL = 1e-4
+
+
+def _emit(signal, *args) -> None:
+    """Emit through a carrier that may already be gone.
+
+    At shutdown Python can collect a carrier while its worker is still running, and then BOTH the
+    result emit and the ``failed.emit`` in the handler below it raise ``RuntimeError: Signal source
+    has been deleted`` — the second one from inside ``except``, so it escapes the Python override of
+    ``QRunnable::run()``. A dead carrier means nobody is listening; that is not an error worth
+    propagating out of a pool thread.
+
+    ONLY that case is swallowed. Cross-thread emits are queued today, so a slot cannot raise inside
+    ``emit()`` — but the moment one of these tasks is run inline on the GUI thread (a test double, a
+    future synchronous path) the connection is DIRECT and a genuine ``RuntimeError`` from the
+    receiving slot would come through here. Silently discarding that from a pool thread, with no log,
+    is how a real bug becomes invisible: anything that is not the teardown case is re-raised."""
+    try:
+        signal.emit(*args)
+    except RuntimeError as exc:   # carrier destroyed under the worker (teardown) — nothing to notify
+        if not _CARRIER_GONE.search(str(exc)):
+            raise
 
 
 def resample_ratio(fs_in: float, fs_out: float) -> tuple[int, int]:
@@ -48,12 +85,44 @@ def resample_ratio(fs_in: float, fs_out: float) -> tuple[int, int]:
     Exposed because a CHUNKED resample has to know it: ``resample_poly``'s polyphase phase at a block
     start depends on that block's start index MOD ``down``, so a streaming reader must cut its blocks on
     multiples of ``down`` or each block lands on a different phase of the filter than the whole-signal
-    resample would (see :func:`inference.streaming.stream_infer`)."""
+    resample would (see :func:`inference.streaming.stream_infer`).
+
+    ``limit_denominator`` is what keeps the pair small enough for a cheap polyphase filter, and a FIXED
+    cap of 1000 is what used to break it: a 3-digit denominator's resolution runs out as the ratio
+    shrinks, and it ran out well inside the rates this app accepts (``io.loaders`` calls anything up to
+    20 kHz a plausible acquisition). Measured against the shipped 8 Hz EDA model, reachable today
+    through force-modality on any high-rate recording:
+
+    * 16001 Hz and up -- 20/22.05/24/30/32/44.1/48/96 kHz -- all gave ``(0, 1)``. ``up == 0`` is not a
+      degraded resample but two wrong answers: ``resample_poly(sig, 0, 1)`` raises ``ValueError`` and
+      the caller's fallback silently linearly interpolated with no antialiasing (20000 -> 8 Hz on a
+      0.05 Hz tone plus a 3001 Hz one: std 0.9658 vs a true 0.7071, and the interferer folds to 1 Hz,
+      inside the model's band), while streaming does not survive it at all -- ``stream_infer`` sizes
+      its overlap-save margin as ``10 * max(up, down) / up`` and died on ``ZeroDivisionError`` at
+      ``inference/streaming.py:146`` before reading a single block, i.e. the record got no analysis.
+    * 16000 Hz gave ``(1, 1000)`` -- accepted by every resampler and wrong by a FACTOR OF TWO: a 300 s
+      record came out 4800 samples long, i.e. 16 Hz fed to an 8 Hz model. Same for 10000 -> 8 Hz (25%
+      high), 11025 -> 8 Hz (37.8%) and 96000 -> 64 Hz (50%). A silent 2x rate error is the worse of the
+      two failure modes, so the escalation triggers on ACCURACY, not merely on ``up == 0``.
+
+    Escalation therefore fires when the 1000-cap ratio is off by more than :data:`_RATIO_REL_TOL`,
+    which no pair that resolved accurately before can hit; a genuinely inexpressible ratio raises
+    instead of returning one no resampler accepts. Cost is unchanged -- polyphase work scales with the
+    RATIO, not the denominator (44100 -> 256 Hz over a 300 s record: 0.16 s at ``(4, 689)``, 0.18 s at
+    the exact ``(64, 11025)``)."""
     if fs_in <= 0 or abs(fs_in - fs_out) < 1e-3:
         return 1, 1
     from fractions import Fraction
 
-    frac = Fraction(float(fs_out) / float(fs_in)).limit_denominator(1000)
+    exact = Fraction(float(fs_out) / float(fs_in))
+    frac = exact.limit_denominator(1000)
+    if frac.numerator < 1 or abs(float(frac) - float(exact)) > _RATIO_REL_TOL * abs(float(exact)):
+        # 100_000 spans every pair inside the app's own plausible band (0.5-20000 Hz, io.loaders)
+        # against all four shipped model rates, exactly: 48 kHz -> 8 Hz is 1/6000, 44.1 kHz -> 256 Hz
+        # is 64/11025.
+        frac = exact.limit_denominator(100_000)
+    if frac.numerator < 1:
+        raise ValueError(f"degenerate resample ratio {fs_in} -> {fs_out} Hz")
     return frac.numerator, frac.denominator
 
 
@@ -64,12 +133,24 @@ def resample_signal(sig, fs_in: float, fs_out: float):
     sig = np.asarray(sig, dtype=np.float32)
     if fs_in <= 0 or abs(fs_in - fs_out) < 1e-3 or sig.size < 2:
         return sig
-    try:  # scipy ships with mne (an app dep); poly resample is anti-aliased
+    up = down = None                    # named out here so the fallback can report what it tried
+    try:
         from scipy.signal import resample_poly
 
         up, down = resample_ratio(fs_in, fs_out)
         return resample_poly(sig, up, down).astype(np.float32)
-    except Exception:  # pragma: no cover - linear fallback if scipy is unavailable
+    except (ImportError, ValueError, MemoryError) as exc:
+        # NARROW and LOUD. A bare ``except Exception`` here turned :func:`resample_ratio` returning
+        # ``(0, 1)`` for every >16 kHz recording into a silent un-antialiased linear resample
+        # (20000 -> 8 Hz: std 0.9658 against a true 0.7071, max|error| 1.01 on a 0.71-std signal)
+        # instead of a reported defect.
+        # ``ImportError`` is DEAD in a correctly installed app -- ``scipy>=1.11,<2`` is a hard
+        # dependency in pyproject.toml, not an mne extra -- but it is the case this fallback was
+        # written for, so it stays. ``ValueError`` is now only the genuinely degenerate ratio
+        # :func:`resample_ratio` refuses to fake; linear is the best that can still be offered, and
+        # the log is what makes it visible.
+        _log.warning("resample_poly %g -> %g Hz (up=%s down=%s) failed; falling back to "
+                     "un-antialiased linear interpolation: %s", fs_in, fs_out, up, down, exc)
         n_out = max(2, int(round(sig.size * fs_out / fs_in)))
         return np.interp(
             np.linspace(0.0, 1.0, n_out), np.linspace(0.0, 1.0, sig.size), sig
@@ -106,10 +187,17 @@ class LoadResampleTask(QRunnable):
     model rate, plus the primary-channel plot cache — everything that used to freeze the GUI thread
     in ``Coordinator.on_recording_opened``. Emits one ``ready`` payload the Coordinator routes back
     to the (already-bound) viewmodels on the GUI thread; the event loop stays responsive throughout.
+
+    ``cancel`` is the same cooperative token :class:`InferenceTask` takes: a superseded load (the user
+    opened another recording) used to read and resample the WHOLE channel anyway and then emit — so the
+    one path whose result could outlive its own carrier was also the one that always ran to completion.
+    ``gen`` is the Coordinator's recording generation, carried IN THE PAYLOAD so the staleness check
+    never depends on this carrier still being alive when the queued signal is delivered.
     """
 
     def __init__(self, handle, infer_ch: str, plot_ch: str, plot_channels: list,
-                 fs_out: float, modality: str, signals: LoadResampleWorkerSignals):
+                 fs_out: float, modality: str, signals: LoadResampleWorkerSignals,
+                 cancel=None, gen: int | None = None):
         super().__init__()
         self.handle = handle
         self.infer_ch = infer_ch
@@ -118,6 +206,11 @@ class LoadResampleTask(QRunnable):
         self.fs_out = float(fs_out)
         self.modality = modality
         self.signals = signals
+        self.cancel = cancel
+        self.gen = gen
+
+    def cancelled(self) -> bool:
+        return self.cancel is not None and self.cancel.is_set()
 
     def run(self) -> None:
         try:
@@ -125,6 +218,8 @@ class LoadResampleTask(QRunnable):
             fs_in = float(h.fs_hz[self.infer_ch])
             n = int(h.n_samples[self.infer_ch])
             raw_infer = np.asarray(read_window(h, [self.infer_ch], 0, n), dtype=np.float32).reshape(-1)
+            if self.cancelled():
+                return                                 # superseded: don't resample what nobody wants
             sig = resample_signal(raw_infer, fs_in, self.fs_out)   # inference signal @ model rate
 
             plot_fs = float(h.fs_hz[self.plot_ch])
@@ -132,19 +227,25 @@ class LoadResampleTask(QRunnable):
             if self.plot_ch == self.infer_ch:
                 raw_plot = raw_infer                                # avoid a second disk read
             else:
+                if self.cancelled():
+                    return
                 raw_plot = np.asarray(read_window(h, [self.plot_ch], 0, n_plot)).reshape(-1)
             full_t, full_y, trace_lo, trace_hi = build_plot_cache(raw_plot, plot_fs)
+            if self.cancelled():
+                return                                 # a cancelled load is silent, like a cancelled run
 
-            self.signals.ready.emit({
+            _emit(self.signals.ready, {
                 "modality": self.modality, "handle": h, "sig": sig,
                 "fs_in": fs_in, "fs_out": self.fs_out,
                 "plot_channels": self.plot_channels, "plot_fs": plot_fs,
                 "full_t": full_t, "full_y": full_y,
                 "trace_lo": trace_lo, "trace_hi": trace_hi,
-                "n_samples_primary": n_plot,
+                "n_samples_primary": n_plot, "_rgen": self.gen,
             })
         except Exception as exc:  # noqa: BLE001 - surface to the UI, don't crash the pool
-            self.signals.failed.emit(self.modality, str(exc))
+            if self.cancelled():
+                return
+            _emit(self.signals.failed, self.modality, str(exc))
 
 
 class InferenceTask(QRunnable):
@@ -293,13 +394,13 @@ class InferenceTask(QRunnable):
                     pass
             if self.cancelled():
                 return
-            self.signals.intervalsReady.emit(self.runner.modality, intervals)
+            _emit(self.signals.intervalsReady, self.runner.modality, intervals)
             if guard is not None:
-                self.signals.guardReady.emit(self.runner.modality, guard)
+                _emit(self.signals.guardReady, self.runner.modality, guard)
         except Exception as exc:  # noqa: BLE001
             if self.cancelled():
                 return              # a cancelled run is silent even when it dies on the way out
-            self.signals.failed.emit(self.runner.modality, str(exc))
+            _emit(self.signals.failed, self.runner.modality, str(exc))
 
     def _window_starts_sec(self, n_windows: int):
         """The scored windows' real start times, or ``None`` when they cannot be established.
@@ -417,7 +518,7 @@ class InferenceTask(QRunnable):
                     f"{nov_frac:.0%} of windows have signal-quality features unlike the training set"
                     + (f" (mainly {nov_top})" if nov_top else "")
                     + " — possible new device/cohort; scores may not transfer.")
-            self.signals.dataQualityReady.emit(self.runner.modality, {
+            _emit(self.signals.dataQualityReady, self.runner.modality, {
                 "completeness": dq.completeness, "usable": dq.usable, "flags": list(dq.flags),
                 "missing_frac": dq.missing_frac, "flatline_frac": dq.flatline_frac,
                 "clipping_frac": dq.clipping_frac, "n_dropout_gaps": dq.n_dropout_gaps,
@@ -479,9 +580,9 @@ class ChannelCacheTask(QRunnable):
         try:
             from biosqa.inference.streaming import build_plot_cache_blockwise
             ft, fy, lo, hi = build_plot_cache_blockwise(self.handle, self.channel, self.fs)
-            self.signals.ready.emit(self.channel, ft, fy, float(lo), float(hi))
+            _emit(self.signals.ready, self.channel, ft, fy, float(lo), float(hi))
         except Exception as exc:  # noqa: BLE001
-            self.signals.failed.emit(self.channel, str(exc))
+            _emit(self.signals.failed, self.channel, str(exc))
 
 
 class StreamInferenceTask(QRunnable):
@@ -501,8 +602,10 @@ class StreamInferenceTask(QRunnable):
 
     def __init__(self, handle, infer_ch: str, plot_ch: str, plot_channels: list, modality: str,
                  runner, overlap: float, signals: StreamWorkerSignals, rebuild_plot: bool = True,
-                 refine_enabled: bool = True, block_sec: float = 300.0, cancel=None):
+                 refine_enabled: bool = True, block_sec: float = 300.0, cancel=None,
+                 gen: int | None = None):
         super().__init__()
+        self.gen = gen                           # recording generation, carried in the plotReady payload
         self.handle = handle
         self.infer_ch = infer_ch
         self.plot_ch = plot_ch
@@ -530,8 +633,9 @@ class StreamInferenceTask(QRunnable):
                 full_t, full_y, lo, hi = build_plot_cache_blockwise(h, self.plot_ch, plot_fs)
                 if self.cancelled():
                     return
-                self.signals.plotReady.emit({
+                _emit(self.signals.plotReady, {
                     "modality": self.modality, "handle": h, "sig": None, "streaming": True,
+                    "_rgen": self.gen,
                     "plot_channels": self.plot_channels, "plot_fs": plot_fs,
                     "full_t": full_t, "full_y": full_y, "trace_lo": lo, "trace_hi": hi,
                     "n_samples_primary": n_plot,
@@ -585,12 +689,17 @@ class StreamInferenceTask(QRunnable):
                         blocked = "boundary refinement could not be computed for it"
             if self.cancelled():
                 return
-            self.signals.intervalsReady.emit(self.modality, intervals)
-            self.signals.notice.emit(self._notice(refined, blocked))
+            # The number of windows this pass actually scored, stamped on the carrier (the same idiom
+            # the generation guards use) because the STREAMED count is not knowable at dispatch — the
+            # record is read block by block. Without it the Coordinator divides by a dispatch-time 0
+            # and reports latencyMs = 0.0 for exactly the recordings whose analysis takes longest.
+            self.signals._n_windows = int(len(tiers))   # type: ignore[attr-defined]
+            _emit(self.signals.intervalsReady, self.modality, intervals)
+            _emit(self.signals.notice, self._notice(refined, blocked))
         except Exception as exc:  # noqa: BLE001
             if self.cancelled():
                 return
-            self.signals.failed.emit(self.modality, str(exc))
+            _emit(self.signals.failed, self.modality, str(exc))
 
     def _notice(self, refined: bool, blocked: str) -> str:
         """The streamed-mode notice — it must name EVERY analysis this record did not get, and why.
@@ -620,7 +729,7 @@ class AuditTask(QRunnable):
 
     def __init__(self, runner: OnnxRunner, window, model_grade: dict, guard: dict | None,
                  signals: AuditWorkerSignals, model: str = "qwen3:32b", samples: int = 3,
-                 host: str = "http://localhost:11434", timeout: float = 60.0):
+                 host: str = "http://localhost:11434", timeout: float = 60.0, cancel=None):
         super().__init__()
         self.runner = runner
         self.window = window
@@ -631,17 +740,29 @@ class AuditTask(QRunnable):
         self.samples = samples
         self.host = host
         self.timeout = float(timeout)
+        #: cooperative token; the audit pool is single-threaded, so a queued audit that is no longer
+        #: wanted (app quitting / another recording opened) must not start its own ollama round trip.
+        self.cancel = cancel
+
+    def cancelled(self) -> bool:
+        return self.cancel is not None and self.cancel.is_set()
 
     def run(self) -> None:
+        if self.cancelled():
+            return
         try:
             fs = float(self.runner.card.fs_hz)
             judgment = audit_segment(self.window, fs, self.runner.modality,
                                      model_grade=self.model_grade, guard=self.guard,
                                      model=self.model, samples=self.samples, host=self.host,
                                      timeout=self.timeout)
-            self.signals.auditReady.emit(judgment)
+            if self.cancelled():
+                return
+            _emit(self.signals.auditReady, judgment)
         except Exception as exc:  # noqa: BLE001
-            self.signals.failed.emit(str(exc))
+            if self.cancelled():
+                return
+            _emit(self.signals.failed, str(exc))
 
 
 class SaliencyTask(QRunnable):
@@ -674,10 +795,57 @@ class SaliencyTask(QRunnable):
                 attribution = grade_group_attribution(self.window, self.runner)
             except Exception:  # noqa: BLE001
                 attribution = None
-            self.signals.saliencyReady.emit(
-                {"map": [round(float(v), 4) for v in sal], "n": int(n), "attribution": attribution})
+            _emit(self.signals.saliencyReady,
+                  {"map": [round(float(v), 4) for v in sal], "n": int(n), "attribution": attribution})
         except Exception:  # noqa: BLE001 - advisory only
-            self.signals.saliencyReady.emit({"map": [], "n": 0, "attribution": None})
+            _emit(self.signals.saliencyReady, {"map": [], "n": 0, "attribution": None})
+
+
+class SqiWorkerSignals(QObject):
+    """Carrier for :class:`SqiTask` (lives here next to its task; ``workers.signals`` holds the older
+    carriers). ``sqiReady`` payload: ``{rows, filtered, consensus, usability}``."""
+
+    sqiReady = Signal(object)
+
+
+class SqiTask(QRunnable):
+    """The interpretable classical-SQI breakdown + task-usability verdicts for one selected window.
+
+    This ran DIRECTLY on the GUI thread. It is not cheap: the bank is computed TWICE (raw, then a
+    band-pass-filtered copy for the Raw/Filtered toggle) and its beat/peak-detection stages are
+    seconds-scale on a long segment — a 40-minute clean ECG run-length-encodes to ONE Q3 segment, and
+    selecting it froze the window for ~10-20 s, again on every re-selection and boundary nudge. Same
+    off-thread shape as :class:`SaliencyTask`; the panel fills in when the result lands."""
+
+    def __init__(self, window, fs: float, modality: str, signals: "SqiWorkerSignals"):
+        super().__init__()
+        self.window = window
+        self.fs = float(fs)
+        self.modality = modality
+        self.signals = signals
+
+    def run(self) -> None:
+        try:
+            from biosqa.inference.sqi_breakdown import sqi_breakdown, sqi_consensus
+            rows = sqi_breakdown(self.window, self.fs, self.modality)
+            # the SAME bank on a band-pass-filtered copy (Raw/Filtered toggle): shows what a standard
+            # filter would/would not fix — e.g. baseline wander clears, in-band EMG does not.
+            try:
+                from biosqa.inference.recover import filter_for_modality
+                filt_rows = sqi_breakdown(filter_for_modality(self.window, self.fs, self.modality),
+                                          self.fs, self.modality)
+            except Exception:  # noqa: BLE001 - filtered view is advisory
+                filt_rows = []
+            consensus = sqi_consensus(rows)      # consensus is on the RAW bank (what the model saw)
+        except Exception:  # noqa: BLE001
+            rows, filt_rows, consensus = [], [], 0.0
+        try:  # per-modality "usable for what" verdicts (EEG per-band, EDA tonic/phasic)
+            from biosqa.inference.task_usability import usability_verdicts
+            usability = usability_verdicts(self.window, self.fs, self.modality)
+        except Exception:  # noqa: BLE001
+            usability = []
+        _emit(self.signals.sqiReady, {"rows": rows, "filtered": filt_rows,
+                                      "consensus": consensus, "usability": usability})
 
 
 class TranscodeTask(QRunnable):
@@ -708,5 +876,8 @@ __all__ = [
     "StreamInferenceTask",
     "ChannelCacheTask",
     "AuditTask",
+    "SaliencyTask",
+    "SqiTask",
+    "SqiWorkerSignals",
     "TranscodeTask",
 ]

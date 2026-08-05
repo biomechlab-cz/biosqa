@@ -99,7 +99,8 @@ def stream_infer(handle, channel: str, runner, *, overlap: float = 0.0,
 
     Every per-window number comes from :mod:`inference.postprocess`, the same helper the in-memory
     :class:`workers.qt_threads.InferenceTask` calls: the raw softmax is sanitized (non-finite ->
-    uniform) and temperature-scaled by the card BEFORE confidence/entropy are read off it, and the
+    uniform) BEFORE confidence/entropy are read off it — the grade temperature is baked into the ONNX
+    graph, so the softmax is already calibrated and is never re-scaled host-side — and the
     calibrated distribution is returned so a streamed record gets the same APS prediction sets. A
     record must not export different numbers just because it was big enough to take this path.
 
@@ -157,8 +158,8 @@ def stream_infer(handle, channel: str, runner, *, overlap: float = 0.0,
         """Grade a stack of windows and append every per-window number, in window order."""
         pred = runner.predict_windows_multihead(
             np.stack([normalize_window(w, card.normalization) for w in wins]))
-        # Sanitize + temperature-scale ONCE, then read every user-facing number off that ONE
-        # calibrated distribution (identical to the in-memory path — see postprocess).
+        # Sanitize ONCE (the graph already applied the temperature), then read every user-facing
+        # number off that ONE calibrated distribution (identical to the in-memory path — see postprocess).
         q, non_finite = calibrate_grade_probs(pred.primary, card)
         tiers.extend(codes[i] for i in q.argmax(axis=1))
         confs.extend(confidences_from(q, non_finite).tolist())

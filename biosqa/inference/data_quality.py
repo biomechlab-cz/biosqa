@@ -18,6 +18,16 @@ import numpy as np
 __all__ = ["record_quality", "RecordQuality"]
 
 _FLAT_WIN_S = 0.5         # local-activity window: "does the trace move at all over half a second?"
+_FLAT_MIN_WIN_N = 64      # ... but NEVER fewer than this many samples (see _flat_mask). A seconds-only
+                          # horizon is not bandwidth-aware: at EDA's 8 Hz model rate it is a 4-SAMPLE
+                          # rolling std, which measures quantisation noise rather than motion, and a
+                          # healthy sub-0.5 Hz tonic trace fails it for most of its length (measured on
+                          # 10 real EDABE records: flatline_frac 0.42-0.82, 9 of 10 flagged
+                          # "dead/disconnected sensor?" and 8 of 10 usable=False -- on data that is fine).
+                          # A sampling rate is chosen for its modality's bandwidth, so a fixed SAMPLE
+                          # count is the bandwidth-relative horizon a fixed second count only looks like.
+                          # 64 samples is 0.26 s at ECG/EEG rates (below the 0.5 s floor -> no change),
+                          # 1 s at PPG's 64 Hz and 8 s at EDA's 8 Hz.
 _FLAT_REL = 1e-3          # local excursion below this fraction of the channel's OWN range = not moving
 _FLAT_MIN_RUN_S = 1.0     # ... and it must last this long: a slow trace is briefly still at a turning point
 _DEAD_MOBILITY = 1.3      # std(diff)/std: >= this = white noise only, no band-limited biosignal.
@@ -195,8 +205,20 @@ def _flat_mask(xf: np.ndarray, finite: np.ndarray, fs: float) -> np.ndarray:
         the dead half stops looking flat -- the statistic destroys the very thing it must measure. The
         1-99 percentile range is taken over the whole channel and survives a channel that is dead for
         most of its length (it only needs ~1% live samples on each side of the distribution).
-    A genuinely still stretch also has to LAST (_FLAT_MIN_RUN_S): every smooth signal is momentarily
-    motionless at a turning point, and a clipped plateau is short -- neither is a dead sensor.
+    Why the horizon has a floor in SAMPLES (_FLAT_MIN_WIN_N) and not only in seconds: the horizon has to
+    be long enough that a live trace of THIS modality plainly moves across it, and each modality's
+    sampling rate is already chosen for its bandwidth -- so a sample count travels with the bandwidth
+    where a second count does not. Half a second is 125 samples of ECG but 4 samples of EDA, and a
+    4-sample rolling std of an 8 Hz tonic trace is measuring the recorder's quantisation step, not
+    motion: every real EDA record then reads as a mostly-dead sensor. Holding the horizon at >= 64
+    samples leaves ECG/EEG untouched and gives EDA the several seconds its physiology needs. It also
+    repairs a MISS in the same direction: at a 4-sample horizon the rolling-activity estimate is so
+    noisy that its CV fails :func:`_is_dead_channel`'s stationarity test, so an 8 Hz channel that was
+    dead end to end scored flatline_frac 0.000.
+    A genuinely still stretch also has to LAST (_FLAT_MIN_RUN_S, and never less than the horizon
+    itself -- a run shorter than the window that measured it is not independent evidence): every smooth
+    signal is momentarily motionless at a turning point, and a clipped plateau is short -- neither is a
+    dead sensor.
 
     Amplitude is necessary but NOT sufficient: it only sees a stretch stiller than _FLAT_REL of the
     range, and a floating electrode dithers far louder than that. So a stretch is flat if it fails to
@@ -210,11 +232,13 @@ def _flat_mask(xf: np.ndarray, finite: np.ndarray, fs: float) -> np.ndarray:
     if scale <= 0.0:
         return np.ones(n, dtype=bool)                    # zero dynamic range: constant / all-zero = dead
     xc = xf - float(np.median(xv))
-    act = _rolling_std(xc, int(round(_FLAT_WIN_S * fs)))
+    win = max(int(round(_FLAT_WIN_S * fs)), _FLAT_MIN_WIN_N)
+    act = _rolling_std(xc, win)
     if _is_dead_channel(xv, act):
         return np.ones(n, dtype=bool)                    # structureless end to end: disconnected input
     flat = (act <= _FLAT_REL * scale) | _dead_stretch_mask(xc, act, scale, fs)
-    return _sustained(flat, max(1, min(int(round(_FLAT_MIN_RUN_S * fs)), n)))
+    min_run = max(int(round(_FLAT_MIN_RUN_S * fs)), win)
+    return _sustained(flat, max(1, min(min_run, n)))
 
 
 def _channel_flags(x: np.ndarray, fs: float):
