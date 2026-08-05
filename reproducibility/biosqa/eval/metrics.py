@@ -25,6 +25,13 @@ asymmetry, so read the Q0 row of ``per_class`` — its ``recall`` is the rate at
 which unusable segments are actually caught — alongside QWK.
 
 macro-F1 and Cohen's kappa match the CinC-2011 reporting convention.
+
+Beside the bundle, this module exposes standalone reporting helpers that
+:func:`evaluate` deliberately does not return — :func:`usable_auroc`,
+:func:`usable_operating_points` (AUC-PR + SEN at fixed SPE) and
+:func:`overlap_accuracy` (ordinal OAc). They are functions rather than dict keys
+because ``evaluate``'s returned dict is a hashed contract; see the section
+comment above :data:`SPEC_OPERATING_POINTS` for the full reasoning.
 """
 from __future__ import annotations
 
@@ -34,14 +41,28 @@ from typing import Sequence
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
     balanced_accuracy_score,
     cohen_kappa_score,
     confusion_matrix,
     f1_score,
     roc_auc_score,
+    roc_curve,
 )
 
-__all__ = ["evaluate", "summarize_runs", "usable_auroc", "METRIC_KEYS"]
+__all__ = [
+    "evaluate",
+    "summarize_runs",
+    "usable_auroc",
+    "METRIC_KEYS",
+    # --- operating-point / ordinal reporting (added 2026-08-05, see below) ---
+    "average_precision",
+    "chance_average_precision",
+    "sensitivity_at_specificity",
+    "usable_operating_points",
+    "overlap_accuracy",
+    "SPEC_OPERATING_POINTS",
+]
 
 # The scalar metrics every run reports (used to validate/aggregate run stores).
 METRIC_KEYS = (
@@ -321,6 +342,285 @@ def usable_auroc(y_true, y_prob) -> float:
     if yb.min() == yb.max():
         return float("nan")
     return float(roc_auc_score(yb, y_prob[:, 2] + y_prob[:, 3]))
+
+
+# ---------------------------------------------------------------------------
+# Operating-point and ordinal reporting (added 2026-08-05).
+#
+# WHY these are standalone helpers and NOT keys of evaluate():
+#   `evaluate`'s complete returned dict is hashed by
+#   tests/test_metrics.py::GOLDEN_SHA. Adding a key there changes the dict that
+#   every caller and every historical result JSON is compared against — a
+#   contract change, not an addition. `usable_auroc` was added under exactly
+#   this reasoning and states it in its own docstring; these follow it.
+#   Two of them are also undefined on `evaluate`'s general `labels`: the usable
+#   collapse indexes columns 2 and 3 of a fixed Q0..Q3 probability matrix, and
+#   AUC-PR/SEN@SPE are properties of a *binary decision with a score*, which a
+#   4-class argmax bundle does not have. Call them alongside `evaluate`.
+#
+# WHY they exist at all (2026-08-05 SOTA survey, items P6 and P11): the SQA
+# literature reports discrimination (AUROC, accuracy) and hides operating-point
+# behaviour, and no published ordinal ECG SQA line reports QWK. Neither gap is
+# a modelling problem; both are reporting gaps we can close for free.
+# ---------------------------------------------------------------------------
+
+#: The specificities at which sensitivity is reported. These three are not
+#: arbitrary: they are the operating points Peh, Yao & Dauwels (2022),
+#: "Transformer Convolutional Neural Networks for Automated Artifact Detection
+#: in Scalp EEG", EMBC, pp. 3599-3602, doi:10.1109/embc48229.2022.9871916 use
+#: for scalp-EEG artifact detection. Their abstract (verified 2026-08-05) reads:
+#: "The resulting detector achieves a sensitivity (SEN) of 42.0%, 32.0%, and
+#: 13.3%, at a specificity (SPE) of 95%, 97%, and 99%, respectively." Reporting
+#: on the same grid is what makes our EEG numbers comparable to theirs at all.
+#: (The 2026-08-05 survey quoted 0.604/0.518/0.353 for this same triple, citing
+#: Table VI of the arXiv preprint. That does NOT match the published EMBC
+#: abstract above, which is the only version verified here. Use these grid
+#: points; do not quote either SEN triple as "the" Peh number without saying
+#: which version it came from.)
+SPEC_OPERATING_POINTS = (0.95, 0.97, 0.99)
+
+
+def _spec_tag(specificity: float) -> str:
+    """Key suffix for a specificity: 0.95 -> "95", 0.995 -> "99.5"."""
+    pct = specificity * 100.0
+    return f"{pct:.0f}" if abs(pct - round(pct)) < 1e-9 else f"{pct:g}"
+
+
+def _as_binary(y_true_bin) -> np.ndarray:
+    """Coerce a binary label vector, refusing anything that is not 0/1.
+
+    An `.astype(int)` on a float vector containing 0.5 or NaN silently produces
+    a valid-looking label vector, which would make a wrong AUC-PR rather than an
+    error. These helpers are new, so they get the strict contract that the
+    frozen-by-history functions above could not be given retroactively.
+    """
+    y = np.asarray(y_true_bin).ravel()
+    if y.size == 0:
+        raise ValueError("received an empty y_true")
+    uniq = np.unique(y)
+    if not np.all(np.isin(uniq, (0, 1))):
+        raise ValueError(
+            f"y_true must be binary 0/1 (or bool); got values {uniq[:8].tolist()}. "
+            "Collapse the ordinal grade yourself, e.g. (y >= 2) for the usable decision."
+        )
+    return y.astype(np.int64)
+
+
+def average_precision(y_true_bin, y_score) -> float:
+    """AUC-PR (average precision) of one binary decision — the P6 companion to AUROC.
+
+    ``average_precision_score``'s step-wise estimator, i.e. sum over thresholds of
+    (R_n - R_{n-1}) * P_n. Deliberately not ``auc(recall, precision)``: trapezoidal
+    interpolation of a PR curve is optimistic, and the two disagree by enough to
+    matter at low prevalence.
+
+    Why this is worth reporting alongside every AUROC: AUROC is invariant to class
+    prevalence, AUC-PR is not, so a detector can look strong on AUROC and be
+    unusable at the prevalence it will actually meet. The 2026-08-05 survey's
+    example is LUNA — AUROC 0.921 with AUC-PR 0.528 on the *same* EEG test set —
+    and FEMBA ~0.89 AUROC with ~0.51 AUPR. **Neither of those two numbers was
+    re-verified here** (the survey is the only source); the asymmetry they
+    illustrate is nonetheless a property of the metrics, and
+    ``tests/test_metrics.py::test_auc_pr_exposes_what_auroc_hides_at_low_prevalence``
+    reproduces it on synthetic data rather than on their authority.
+
+    A bare AUC-PR is uninterpretable without its chance level, which is the
+    positive prevalence, NOT 0.5 — see :func:`chance_average_precision`, and prefer
+    :func:`usable_operating_points`, which returns both plus the ratio.
+
+    Returns NaN on a single-class fold, matching :func:`usable_auroc`'s convention
+    so callers can NaN-filter one way for both. (sklearn does not: it returns 1.0
+    for an all-positive vector and 0.0 plus a warning for an all-negative one —
+    two *plausible-looking* numbers that would silently enter a mean.)
+    """
+    y = _as_binary(y_true_bin)
+    s = np.asarray(y_score).ravel()
+    if s.size != y.size:
+        raise ValueError(f"y_true ({y.size}) and y_score ({s.size}) must match")
+    if y.min() == y.max():
+        return float("nan")
+    return float(average_precision_score(y, s))
+
+
+def chance_average_precision(y_true_bin) -> float:
+    """Positive prevalence — the AUC-PR a random ranker achieves on this fold.
+
+    The "trivial-baseline column" the survey asks for beside every accuracy and
+    every AUC-PR. An AUC-PR of 0.53 is excellent at 5% prevalence and worthless at
+    60%, and published AUPRs are routinely quoted without the prevalence needed to
+    tell those apart. Cheap to compute, so there is no excuse for omitting it.
+    """
+    y = _as_binary(y_true_bin)
+    return float(y.mean())
+
+
+def sensitivity_at_specificity(
+    y_true_bin,
+    y_score,
+    specificities: Sequence[float] = SPEC_OPERATING_POINTS,
+) -> dict[str, float]:
+    """SEN at fixed SPE — the operating points the EEG literature reports (P6).
+
+    For each target, the **maximum** sensitivity over all thresholds whose
+    specificity is at least the target, plus the specificity actually achieved
+    there and the score threshold that achieves it. Returns a flat dict so it can
+    go straight into a result JSON and through :func:`summarize_runs`::
+
+        {"sensitivity_at_spec_95": .., "specificity_at_spec_95": .., "threshold_at_spec_95": .., ...}
+
+    Read the *achieved* specificity: an ROC is a step function, so a target is
+    generally over-shot (95% requested, 96.2% delivered), and on a small fold it
+    can be over-shot badly enough that the reported sensitivity is not the one a
+    95%-specificity operating point would really give.
+
+    Two implementation details that are the whole correctness of this function:
+
+    * ``drop_intermediate=False``. sklearn's default *True* deletes ROC vertices
+      it considers collinear, and a deleted vertex is exactly the one that may
+      carry the best feasible sensitivity. Measured on a 10-vertex diagonal ROC
+      (tied pos/neg score pairs): max TPR at FPR <= 0.30 reads **0.1** with the
+      default and the correct **0.3** with it off — a 3x understatement. Pinned by
+      ``test_sensitivity_at_specificity_survives_sklearn_drop_intermediate``.
+    * take the max over feasible thresholds, not the first feasible one. TPR is
+      non-decreasing along the returned curve, so the naive "first point past the
+      target" reads far too low. Among ties the earliest index wins, which is the
+      one with the smallest FPR, i.e. the highest achieved specificity.
+
+    ``roc_curve`` always emits the (0, 0) vertex, so the feasible set is never
+    empty and an unreachable target degrades to sensitivity 0.0 at threshold inf
+    ("call nothing positive") rather than to NaN. NaN is reserved for the
+    single-class fold, where the question is undefined.
+    """
+    y = _as_binary(y_true_bin)
+    s = np.asarray(y_score).ravel()
+    if s.size != y.size:
+        raise ValueError(f"y_true ({y.size}) and y_score ({s.size}) must match")
+    targets = [float(t) for t in specificities]
+    if any(not (0.0 <= t <= 1.0) for t in targets):
+        raise ValueError(f"specificities must lie in [0, 1]; got {targets}")
+
+    out: dict[str, float] = {}
+    if y.min() == y.max():
+        for t in targets:
+            tag = _spec_tag(t)
+            out[f"sensitivity_at_spec_{tag}"] = float("nan")
+            out[f"specificity_at_spec_{tag}"] = float("nan")
+            out[f"threshold_at_spec_{tag}"] = float("nan")
+        return out
+
+    fpr, tpr, thr = roc_curve(y, s, drop_intermediate=False)
+    for t in targets:
+        # 1e-12 slack: fpr is an exact fp/n_neg ratio while 1 - t carries the
+        # float error of the literal (1 - 0.97 == 0.030000000000000027), so an
+        # exact-equality comparison would drop the vertex that *is* the target.
+        feasible = fpr <= (1.0 - t) + 1e-12
+        idx = int(np.argmax(np.where(feasible, tpr, -1.0)))
+        tag = _spec_tag(t)
+        out[f"sensitivity_at_spec_{tag}"] = float(tpr[idx])
+        out[f"specificity_at_spec_{tag}"] = float(1.0 - fpr[idx])
+        out[f"threshold_at_spec_{tag}"] = float(thr[idx])
+    return out
+
+
+def usable_operating_points(
+    y_true,
+    y_prob,
+    specificities: Sequence[float] = SPEC_OPERATING_POINTS,
+) -> dict:
+    """The full P6 reporting row for the deployment decision (forward or discard).
+
+    Same question and same collapse as :func:`usable_auroc` — score
+    ``P(Q2) + P(Q3)`` against truth ``Q >= 2`` — scored on the axes AUROC hides:
+    AUC-PR, its chance level, their ratio, and SEN at each target specificity.
+
+    The AUROC entry is :func:`usable_auroc` itself, called first and unmodified,
+    so this bundle can never disagree with the published usable-AUROC numbers and
+    inherits its input contract exactly (including the degenerate paths: an empty
+    fold raises, a Python-list ``y_true`` raises, a NaN probability raises). Pass
+    an ndarray of integer grades and an (N, >=4) probability matrix.
+
+    ``usable_auc_pr_over_chance`` is the number to read, not ``usable_auc_pr``: on
+    a cohort that is 90% usable, an AUC-PR of 0.93 is *below* chance.
+    """
+    auroc = usable_auroc(y_true, y_prob)          # first: it defines the contract
+    score = y_prob[:, 2] + y_prob[:, 3]           # same expression as usable_auroc
+    yb = (y_true >= 2).astype(int)
+
+    ap = average_precision(yb, score)
+    chance = chance_average_precision(yb)
+    out: dict = {
+        "usable_auroc": auroc,
+        "usable_auc_pr": ap,
+        "usable_auc_pr_chance": chance,
+        "usable_auc_pr_over_chance": float(ap / chance) if chance > 0 else float("nan"),
+        "usable_prevalence": chance,
+        "n": int(yb.size),
+        "n_usable": int(yb.sum()),
+    }
+    for k, v in sensitivity_at_specificity(yb, score, specificities).items():
+        out[f"usable_{k}"] = v
+    return out
+
+
+def overlap_accuracy(y_true, y_pred, *, tolerance: int = 1, labels: Sequence | None = None) -> float:
+    """Ordinal overlap accuracy (OAc): a prediction within ``tolerance`` grades counts (P11).
+
+    ``mean(|rank(y_pred) - rank(y_true)| <= tolerance)``. At ``tolerance=1`` an
+    adjacent-grade call (Q2 graded Q3) is scored correct and only a two-or-more
+    level error (Q0 graded Q2) is wrong.
+
+    Why bother when we already report QWK: Li, Rajagopalan & Clifford (2014), "A
+    machine learning approach to multi-level ECG signal quality classification",
+    *Computer Methods and Programs in Biomedicine* 117(3), 435-447,
+    doi:10.1016/j.cmpb.2014.09.002 — the only published *ordinal* ECG SQA line our
+    Q0..Q3 grades could be cited against — report accuracy/overlap-accuracy pairs
+    on a 5-level scale and no kappa at all. Without OAc our numbers and theirs
+    share no metric, so the comparison cannot be made in either direction.
+    ⚠ Their full text is paywalled and **their reported Ac/OAc values were not
+    verified here**; the 2026-08-05 survey quotes 80.26/98.60 (simulated) and
+    57.26/94.23 (unseen MITDB). Verify against the paper before any of those
+    numbers enters the manuscript. What is verified is the bibliographic record
+    above and that the metric is theirs, not ours.
+
+    Denominator is ``len(y_true)`` — the same one ``accuracy_score`` uses, so
+    ``(evaluate(...)["accuracy"], overlap_accuracy(...))`` is an internally
+    consistent Ac/OAc pair. It therefore does NOT drop out-of-scale samples the
+    way ``evaluate``'s confusion-matrix-derived metrics do; ``tolerance=0``
+    reproduces ``evaluate(...)["accuracy"]`` exactly.
+
+    ``labels`` is the ordered scale. Leave it None for Q0..Q3, where the class
+    values already *are* the ordinal ranks. Pass it when the codes are not
+    contiguous integers (e.g. ``labels=[1, 2, 3, 4, 5]`` for the Li et al. scale,
+    or non-numeric grades) — ranks then come from position in ``labels``, and a
+    value outside it raises rather than being silently ranked by its magnitude.
+    """
+    yt = np.asarray(y_true).ravel()
+    yp = np.asarray(y_pred).ravel()
+    if yt.shape != yp.shape:
+        raise ValueError(f"y_true {yt.shape} and y_pred {yp.shape} must match")
+    if yt.size == 0:
+        raise ValueError("overlap_accuracy() received empty y_true/y_pred")
+    if int(tolerance) != tolerance or tolerance < 0:
+        raise ValueError(f"tolerance must be a non-negative integer; got {tolerance!r}")
+
+    if labels is not None:
+        order = list(np.asarray(labels).ravel().tolist())
+        if len(set(order)) != len(order):
+            raise ValueError(f"labels must be unique; got {order}")
+        rank = {v: i for i, v in enumerate(order)}
+        unknown = sorted({v for v in yt.tolist() + yp.tolist() if v not in rank}, key=repr)
+        if unknown:
+            raise ValueError(
+                f"values {unknown[:8]} are outside labels={order}; overlap accuracy is "
+                "undefined for a class with no position on the ordinal scale"
+            )
+        yt = np.array([rank[v] for v in yt.tolist()])
+        yp = np.array([rank[v] for v in yp.tolist()])
+
+    # float64 on purpose: an unsigned grade array (uint8 from a packed store)
+    # would wrap on subtraction and turn a 3-level error into 253.
+    diff = np.abs(yt.astype(np.float64) - yp.astype(np.float64))
+    return float(np.mean(diff <= tolerance))
 
 
 def summarize_runs(run_metrics: list[dict], keys: Sequence[str] | None = None) -> dict:
