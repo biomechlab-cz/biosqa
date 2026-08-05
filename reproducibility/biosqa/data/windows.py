@@ -49,6 +49,8 @@ class RecordSample:
     subject_id: str
     fs: float
     signal: np.ndarray                 # [C, L] float32
+    sig_names: list[str] | None = None  # per-channel names (e.g. ["MLII", "V1"]); enables
+                                        # store.select_channel to pick an ECG lead BY NAME
     label_native: object | None = None
     label_spans: list[tuple] | None = None  # (start, end, native) or (start, end, native, type_token)
     artifact_type: object | None = None      # whole-record artifact-type token (level-3), or None
@@ -122,7 +124,7 @@ def windowize(
     window_s: float,
     stride_s: float | None = None,
     *,
-    agg: str = "worst",        # "worst" (min Q dominates) | "majority" | "fraction"
+    agg: str = "worst",        # "worst" (min Q dominates) | "majority" | "fraction" | "burden"
     min_coverage: float = 0.5,  # min fraction of a window that must carry a label
     drop_unlabeled: bool = True,
 ) -> list[dict]:
@@ -132,10 +134,21 @@ def windowize(
     ``agg='worst'`` takes the minimum harmonized Q over the window (a window is as
     bad as its worst part — the conservative, clinically-safe choice). ``'majority'``
     takes the most-common harmonized label. ``'fraction'`` (for per-sample binary
-    artifact masks like EDABE/eda_artifact) computes the fraction of non-clean
-    (non-Q3) samples and buckets it via :func:`harmonize.window_fraction_to_q`, so
-    the full Q0..Q3 scale is recovered from a binary source. Windows whose labels
-    can't be determined (all excluded/None) are dropped when ``drop_unlabeled``.
+    artifact masks like EDABE) computes the fraction of non-clean (non-Q3) samples
+    and buckets it via :func:`harmonize.window_fraction_to_q`, so the full Q0..Q3
+    scale is recovered from a binary source. ``'burden'`` is the ordinal
+    generalization of ``'fraction'``: it averages the per-sample artifact *burden*
+    ``(Q3 - q) / Q3``, buckets that, and then clamps the result to be **no worse
+    than the window's own worst sample**, so a graded source (eda_artifact's
+    3-expert vote) lands on the same window scale as a binary one without
+    collapsing its vote and without ever grading a window below any part of it.
+    Semantics on a uniform 60 s eda_artifact window (native = #experts voting
+    artifact): 0/3 -> Q3, 1/3 -> Q2, 2/3 -> Q1, 3/3 -> Q0, i.e. a uniform window
+    keeps its per-5 s grade exactly; partial contamination moves it down by
+    extent. On a purely binary Q0/Q3 source the clamp never binds and
+    ``'burden'`` is identical to ``'fraction'``.
+    Windows whose labels can't be determined (all excluded/None) are dropped when
+    ``drop_unlabeled``.
 
     Each emitted row also carries ``label_native`` (the record's native label,
     for per-record datasets) and ``artifact_type`` (a ``|``-joined set of
@@ -173,6 +186,17 @@ def windowize(
             q_final = None
         elif agg == "fraction":
             q_final = window_fraction_to_q(float(np.mean(qs != Q3)))
+        elif agg == "burden":
+            # Never grade a window BELOW its own worst constituent sample: the
+            # burden bucket measures *extent*, and clamping keeps it from also
+            # re-penalising *severity* that the per-sample Q already encodes.
+            # (Without the clamp, a window every sample of which carries a
+            # unanimous-minus-one vote -> all-Q1 has mean burden 2/3 > 0.50 and
+            # lands on Q0, i.e. worse than any sample in it.) The clamp is a
+            # no-op on a binary Q0/Q3 source, so 'burden' still coincides
+            # exactly with 'fraction' there.
+            q_final = max(window_fraction_to_q(float(np.mean((Q3 - qs) / Q3))),
+                          int(qs.min()))
         else:
             q_final = int(qs.min()) if agg == "worst" else int(np.bincount(qs).argmax())
         if q_final is None:

@@ -1,0 +1,36 @@
+# Minimal packaging metadata so `pip install -e .` puts `biosqa` on the path.
+# Without this, `pip install -r requirements.txt` installs the dependencies but
+# NOT the package, and `python scripts/run_experiment.py` dies with
+# ModuleNotFoundError. The scripts also self-bootstrap sys.path, so an editable
+# install is a convenience, not a hard requirement.
+#
+# torch is deliberately NOT declared here: on Blackwell/sm_120 it must come from
+# the CUDA 12.8 index (see requirements.txt), and pinning it would fight that.
+[project]
+name = "biosqa-reproducibility"
+version = "0.1.0"
+description = "Reference ML code (models, training, frozen eval, ONNX export) for the BioSQA signal-quality models"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "scikit-learn",
+    "pandas",
+    "pyarrow",
+    "zarr>=3",
+    "einops",
+    "pyyaml",
+    "onnx",
+    "onnxruntime",
+]
+
+[project.optional-dependencies]
+tracking = ["mlflow"]
+data = ["wfdb"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["biosqa"]

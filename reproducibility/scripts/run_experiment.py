@@ -1,3 +1,9 @@
+# ---------------------------------------------------------------------------
+# GENERATED FILE — do not edit here.
+# Verbatim copy of <monorepo>/scripts/<this name>, with one transform: the
+# sys.path bootstrap points at <root> (this package's layout puts biosqa/ at
+# the root) instead of <root>/src. Regenerate: python scripts/sync_from_src.py
+# ---------------------------------------------------------------------------
 """Single experiment entrypoint (Plan 1 §4, §3.2).
 
     python scripts/run_experiment.py --experiment dummy_smoke
@@ -21,7 +27,7 @@ import torch
 from torch.utils.data import DataLoader
 
 # make `biosqa` importable whether or not the package is pip-installed
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from biosqa.eval.metrics import evaluate  # noqa: E402
 from biosqa.models.model import build_model  # noqa: E402

@@ -225,6 +225,14 @@ def build_loss(name: str, n_classes: int = 4, class_weights: torch.Tensor | None
     if name in ("focal",):
         return FocalLoss(gamma=gamma, alpha=class_weights)
     if name in ("corn", "ordinal"):
+        # CORN's K-1 conditional BCEs have no per-class alpha to attach, so weights
+        # cannot be honoured here. Fail loudly rather than silently running an
+        # unweighted loss under a `class_weights: balanced` config.
+        if class_weights is not None:
+            raise ValueError(
+                f"loss '{name}' does not support class_weights (CORN trains K-1 conditional "
+                "binary classifiers, not a weighted softmax) — set train.class_weights=null "
+                "or pick a weight-aware loss (ce/focal/sord/qwk)")
         return CornLoss(n_classes)
     if name in ("sord",):
         return SORDLoss(n_classes, tau=tau, class_weights=class_weights)

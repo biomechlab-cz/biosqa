@@ -71,7 +71,9 @@ class QualityHead(nn.Module):
             [torch.zeros(1, device=sp.device, dtype=sp.dtype), torch.cumsum(sp, 0)])  # [K-1] ordered
         s = torch.sigmoid(z.unsqueeze(-1) - theta)               # [..., K-1] = P(y>k)
         p = torch.cat([1 - s[..., :1], s[..., :-1] - s[..., 1:], s[..., -1:]], dim=-1)  # [..., K]
-        return torch.log(p.clamp(min=1e-6))                      # log-probs (softmax recovers p)
+        # additive (not clamped) floor: clamp's backward is exactly zero once it
+        # bites, so a saturated cutpoint would stop receiving gradient entirely.
+        return torch.log(p + 1e-6)                               # log-probs (softmax recovers p)
 
     def forward(self, pooled: torch.Tensor):
         """``[B, d_model] -> (q_logits [B, n_classes], glitch_logits | None)``.
