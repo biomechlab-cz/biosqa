@@ -61,6 +61,9 @@ scores. See [Manual review](/biosqa/docs/manual-review/).
 ## Which datasets were used, and are they redistributable?
 
 The models were trained on **public biosignal datasets under the
-PhysioNet umbrella**. Some sources — for example **TUAR / TUH EEG** —
-require **credentialed access** and are **not redistributed** with the
-app. See [Contributing](/biosqa/docs/contributing/).
+PhysioNet umbrella**. Some sources — for example **TUAR / TUH EEG** and
+**MIMIC-III-Ext-PPG** — require **credentialed access** and are **not
+redistributed** with the app. Note that the shipped **weights inherit
+those terms**: the MIT license covers the app code, not the `.onnx`
+files. Per-model provenance is in `LICENSE-MODELS`; see
+[Contributing](/biosqa/docs/contributing/).
