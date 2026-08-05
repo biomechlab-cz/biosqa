@@ -11,8 +11,37 @@
   "normalization": {
     "method": "none"
   },
-  "training_data_hash": "eeg-multihead-store_v8-expert-grade",
+  "training_data_hash": "sha256:6619de7edda6f96425ed837c969bca84ad75159d312b0edc845ae9b11fbbea48",
   "model_version": "v5-multihead-expert-grade-cleaned",
+  "onnx_sha256": "cf80f542d817f74e64ff03b17230dfe6602b0edd4591ad3f2abba20fb23f1ddc",
+  "training_data_provenance": {
+    "store": "data/store_v8",
+    "training_run": "eeg-multihead-store_v8-expert-grade",
+    "digest": "sha256:6619de7edda6f96425ed837c969bca84ad75159d312b0edc845ae9b11fbbea48",
+    "digest_of": "data/store_v8 segments.parquet (the window/label index)",
+    "digest_source": "data/store_v8/snapshot_manifest.json: hashes.segments_sha256",
+    "waveforms_tree_sha256": "45df592d0245020dfb805f3651520601c7ff603396d38e313db9ef747ac3e405",
+    "cohorts": [
+      "TUAR",
+      "PhysioMotion",
+      "Phantom-EEG",
+      "Mind-in-Motion",
+      "Motion-Artifact EEG"
+    ],
+    "note": "grade+usable heads train on TUAR+PhysioMotion only (see grade_training); the type head uses all five cohorts. This is the only shipped card whose training store carries a snapshot manifest, so it is the only one with a real digest."
+  },
+  "license": {
+    "code_license": "MIT (app/LICENSE) — covers the app source, not these weights",
+    "weights_terms": "app/LICENSE-MODELS",
+    "redistribution": "restricted",
+    "commercial_use": "unverified",
+    "source_terms": [
+      "TUAR (TUH EEG Artifact Corpus): signed Temple University data use agreement required; the data may not be redistributed and the agreement does not address derived weights",
+      "PhysioMotion (ds006386), Phantom-EEG (ds004784), Mind-in-Motion (ds004625): CC0 (OpenNeuro)",
+      "Motion-Artifact fNIRS+EEG: open access (PhysioNet)"
+    ],
+    "note": "provenance statement, not legal advice; verify each source's current terms before redistributing"
+  },
   "inputs": [
     "x_raw",
     "x_feat"

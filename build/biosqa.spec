@@ -41,11 +41,21 @@ model_datas = [
     if f.is_file() and f.name not in {"README.md", ".gitkeep"}
 ]
 
+# The weights are NOT covered by app/LICENSE (MIT): PPG/EDA/EEG inherit terms from MIMIC,
+# WESAD and TUAR. The glob above only reaches models/, so without this the frozen bundle
+# would ship the .onnx files stripped of the one document stating those terms. Bundle both
+# licenses next to the binary; a release that carries the weights must carry the notice.
+license_datas = [
+    (str(APP_ROOT / name), ".")
+    for name in ("LICENSE-MODELS", "LICENSE")
+    if (APP_ROOT / name).is_file()
+]
+
 a = Analysis(
     [str(PACKAGE / "main.py")],
     pathex=[str(APP_ROOT)],
     binaries=[],
-    datas=qml_datas + model_datas + collect_data_files("PySide6", subdir="qml"),
+    datas=qml_datas + model_datas + license_datas + collect_data_files("PySide6", subdir="qml"),
     hiddenimports=[
         "biosqa.viewmodels",
     ],

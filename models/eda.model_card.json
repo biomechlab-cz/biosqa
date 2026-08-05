@@ -13,6 +13,29 @@
   },
   "training_data_hash": "eda-combined-fusion-store_v3",
   "model_version": "v3-combined-fusion-ordlogit",
+  "onnx_sha256": "edd2294a9b8fe99c984526589992e46312566336f5253fb04af371ebd6c741ed",
+  "training_data_provenance": {
+    "store": "data/store_v3",
+    "cohorts": [
+      "EDABE",
+      "EDA-Artifact-Detection (UTD)",
+      "EDA-Artifact-Detection (AWW)"
+    ],
+    "digest": null,
+    "digest_note": "no snapshot manifest was recorded for store_v3, so no training-corpus digest is available; 'training_data_hash' above is a training-run nickname, NOT a hash",
+    "note": "cohort list verified against the store's segment index; WESAD (EDA) and PPG-DaLiA (EDA) are part of the wider research corpus (store_v8) but NOT of this shipped model's training store"
+  },
+  "license": {
+    "code_license": "MIT (app/LICENSE) — covers the app source, not these weights",
+    "weights_terms": "app/LICENSE-MODELS",
+    "redistribution": "review-required",
+    "commercial_use": "unverified",
+    "source_terms": [
+      "EDABE: research use (Zenodo release)",
+      "EDA-Artifact-Detection (UTD / AWW): research use"
+    ],
+    "note": "all three cohorts are openly downloadable research datasets, but none of their terms has been individually verified as permitting redistribution of derived weights; provenance statement, not legal advice"
+  },
   "inputs": [
     "x_raw",
     "x_feat"
@@ -84,6 +107,8 @@
       "grade": 0.75,
       "usable": 3.0
     },
+    "fit_partition": "validation",
+    "evaluation_partition": "validation",
     "grade_ece": [
       0.1105,
       0.0786
@@ -91,7 +116,8 @@
     "usable_ece": [
       0.1307,
       0.0284
-    ]
+    ],
+    "partition_note": "the ECE pairs above are measured on the SAME validation split the temperature grid was minimized on, so the post-scaling number is an optimization minimum and optimistic. Held-out ECE is not measured for this card; it needs a re-run of the calibration evaluation."
   },
   "routing": "grade+usable <- raw trunk fused with host combined SQI+dynamics vector; grade = ordinal ordered-logit",
   "input_contract": {

@@ -13,6 +13,31 @@
   },
   "training_data_hash": "dualbranch-synthaug",
   "model_version": "v3-dualbranch-spectral",
+  "onnx_sha256": "44d92b765d239beb587d6656e8d57537a33435c4a3ba0e423123efe78d3cd34e",
+  "training_data_provenance": {
+    "store": "data/store_v2",
+    "cohorts": [
+      "CinC-2011",
+      "BUT QDB",
+      "European ST-T Database",
+      "MIT-BIH Malignant Ventricular Ectopy Database",
+      "MIT-BIH NSTDB",
+      "MIT-BIH Supraventricular Arrhythmia Database",
+      "PTB-XL"
+    ],
+    "digest": null,
+    "digest_note": "no snapshot manifest was recorded for store_v2, so no training-corpus digest is available; 'training_data_hash' above is a training-run nickname, NOT a hash"
+  },
+  "license": {
+    "code_license": "MIT (app/LICENSE) — covers the app source, not these weights",
+    "weights_terms": "app/LICENSE-MODELS",
+    "redistribution": "attribution-required",
+    "commercial_use": "no restriction known from the training sources",
+    "source_terms": [
+      "all training cohorts are open-access PhysioNet datasets (ODC-BY / CC BY family)"
+    ],
+    "note": "provenance statement, not legal advice; verify each source's current terms before redistributing"
+  },
   "inputs": [
     "x_raw",
     "x_spec"
@@ -95,6 +120,8 @@
       "grade": 0.4,
       "usable": 3.5484
     },
+    "fit_partition": "validation",
+    "evaluation_partition": "validation",
     "grade_ece": [
       0.2557,
       0.0654
@@ -102,7 +129,8 @@
     "usable_ece": [
       0.1298,
       0.0237
-    ]
+    ],
+    "partition_note": "the ECE pairs above are measured on the SAME validation split the temperature grid was minimized on, so the post-scaling number is an optimization minimum and optimistic (a held-out replication of the grade head on this graph gave 0.1343 -> 0.1121). Held-out ECE is not measured for this card; it needs a re-run of the calibration evaluation."
   },
   "routing": "grade<-raw branch; usable+type<-raw+spectral fused",
   "input_contract": {
@@ -113,7 +141,10 @@
   "ood": {
     "method": "conformal_aps",
     "grade_nonconformity_threshold": 0.9682,
-    "alpha": 0.1
+    "alpha": 0.1,
+    "fit_model": "v2-calibrated (the superseded single-input ECG graph)",
+    "measured_empirical_coverage": 0.885,
+    "coverage_note": "this tau was fit on the SUPERSEDED single-branch model and carried over unchanged. Measured on 1390 store_v2 ECG val windows through THIS graph it covers the true grade 88.5% of the time against a nominal 90% (alpha=0.1); a tau re-fit on this graph (0.9830) gives 90.1%. Re-fitting requires a model run, so the value is left as shipped and the measured coverage is stated here instead. The app deliberately surfaces the APS set as ambiguity and never prints a coverage percentage."
   },
   "novelty": {
     "method": "mahalanobis_sqi",
