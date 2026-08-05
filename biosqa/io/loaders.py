@@ -152,6 +152,26 @@ def open_wfdb(path: str | Path) -> RecordingHandle:
     record_path = _resolve_companion(Path(path))
     header = wfdb.rdheader(str(record_path.with_suffix("")))
     fs = float(header.fs)
+    # Refuse a header that is syntactically valid but describes something no analysis
+    # can consume, rather than handing the UI a confident-looking channel list.
+    # BUT PPG's records declare `<name> 10000 1000 1` -- TEN THOUSAND signals of ONE
+    # sample each, with no signal names, because the cohort stores one record per
+    # matrix row. That opened cleanly and populated the channel panel with 10 000
+    # entries named None, None#2 ... None#10000, every one of them a single sample.
+    # This is the same failure class as the zarr path (accept and return garbage) but
+    # on WFDB, which is the app's primary advertised input and is reachable straight
+    # from the file dialog.
+    # The floor is 2, not a window length: "short but real" is already reported loudly
+    # downstream with a better message. This rejects only what cannot be a signal.
+    n_samples = int(header.sig_len)
+    n_sig = int(getattr(header, "n_sig", 0) or 0)
+    if n_samples < 2:
+        raise ValueError(
+            f"{record_path.name}: the header declares {n_sig} signal(s) of {n_samples} "
+            f"sample(s) each at {fs:g} Hz — that is not a recording. This layout usually "
+            "means the file stores one record per row (BUT PPG does); open an individual "
+            "record instead."
+        )
     names = _unique_names(list(header.sig_name))
     raw_units = list(getattr(header, "units", []) or [])
     units = {n: (raw_units[i] if i < len(raw_units) else "") for i, n in enumerate(names)}

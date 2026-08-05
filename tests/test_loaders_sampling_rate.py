@@ -114,3 +114,39 @@ def test_wfdb_duplicate_signal_names_stay_distinct_channels(tmp_path):
     got_b = read_window(h, ["ECG#2"], 0, 200).reshape(-1)
     assert np.allclose(got_a, a[:200], atol=1e-3)
     assert np.allclose(got_b, b[:200], atol=1e-3)       # ... not lead 0's samples again
+
+
+def _write_header_only(tmp_path, name, n_sig, fs, n_samp):
+    """Hand-write a WFDB header + matching .dat.
+
+    ``wfdb.wrsamp`` REFUSES to write a one-sample record, so the fixture cannot be
+    produced through the library that reads it -- which is the point: this shape is
+    not something a well-formed writer emits, but it is what BUT PPG ships and what
+    ``rdheader`` happily parses.
+    """
+    lines = [f"{name} {n_sig} {fs} {n_samp}"]
+    lines += [f"{name}.dat 16 200 16 0 0 0 0 "] * n_sig
+    (tmp_path / f"{name}.hea").write_text("\n".join(lines) + "\n", encoding="ascii")
+    (tmp_path / f"{name}.dat").write_bytes(bytes(2 * n_sig * n_samp))
+    return tmp_path / f"{name}.hea"
+
+
+def test_wfdb_header_with_one_sample_per_signal_is_refused(tmp_path):
+    """A syntactically valid header that describes no recording must be REFUSED, not
+    turned into a channel list.
+
+    BUT PPG stores one record per matrix row, so its headers read
+    ``100001_ECG 10000 1000 1`` -- ten thousand signals of ONE sample each, unnamed.
+    ``open_recording`` accepted that and returned 10 000 channels called None, None#2 ...
+    None#10000, each one sample long: the same accept-and-return-garbage failure the
+    zarr path had, but on WFDB, which is the app's primary advertised input and is
+    reachable straight from the file dialog.
+    """
+    bad = _write_header_only(tmp_path, "onesample", n_sig=10, fs=1000, n_samp=1)
+    with pytest.raises(ValueError, match="not a recording"):
+        open_recording(str(bad))
+
+    # A two-sample record IS structurally a signal. "Too short to analyse" is reported
+    # downstream with a better message, so this layer must let it through.
+    ok = _write_header_only(tmp_path, "twosample", n_sig=1, fs=1000, n_samp=2)
+    assert len(open_recording(str(ok)).channel_names) == 1
