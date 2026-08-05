@@ -36,6 +36,7 @@ __all__ = [
     "nested_cohort_selection",
     "cluster_bootstrap_ci",
     "cluster_bootstrap_ci_detail",
+    "cluster_bootstrap_statistic",
     "MIN_CLUSTERS_FOR_PERCENTILE",
     "PAPER_CI_METHOD",
     "dump_raw_points",
@@ -456,6 +457,71 @@ def cluster_bootstrap_ci(
     )
     return (r["mean"], r["lo"], r["hi"])
 
+
+
+def cluster_bootstrap_statistic(
+    statistic,
+    clusters: Sequence,
+    *arrays,
+    n_boot: int = 2000,
+    alpha: float = 0.05,
+    seed: int = 0,
+) -> dict:
+    """Cluster-bootstrap CI of an ARBITRARY statistic, not just a mean.
+
+    :func:`cluster_bootstrap_ci` interval-estimates the *mean* of per-unit values, and
+    its ``method="t"`` fix studentizes that mean with a cluster-robust SE. Neither
+    applies to a statistic that is not an average of per-window numbers — expected
+    calibration error is the motivating case: ECE bins the whole sample by confidence
+    and sums ``|acc - conf|`` per bin, so there is no per-window quantity to average
+    and no closed-form SE. The only honest interval for it is to resample whole
+    clusters, recompute the statistic from scratch on each replicate, and take
+    percentiles of that distribution.
+
+    ``statistic(*arrays)`` is called once per replicate with each array indexed by the
+    resampled row set, so it sees a real sample, not a re-weighted one. ``clusters``
+    is one id per row (subject, record, cohort — whatever the independent unit is).
+
+    Returns ``{point, lo, hi, n, n_clusters, n_boot, alpha, method, n_failed}``.
+
+    ⚠ The interval is a PERCENTILE bootstrap and therefore inherits the small-``g``
+    anti-conservatism this module measures for the mean case (g=4 -> 81 %, g=5 -> 84 %,
+    g=7 -> 88 % realized coverage of a nominal 95 %); ``method="t"`` is not available
+    here because there is no cluster-robust SE for a general statistic. ``n_clusters``
+    is returned so a reader can apply that discount, and a warning fires below
+    :data:`MIN_CLUSTERS_FOR_PERCENTILE`. Replicates on which ``statistic`` raises (a
+    resample can be single-class) are dropped and counted in ``n_failed`` rather than
+    silently poisoning the quantiles.
+    """
+    cl = _as_array(clusters)
+    arrs = [np.asarray(a) for a in arrays]
+    if any(len(a) != len(cl) for a in arrs):
+        raise ValueError("cluster_bootstrap_statistic: arrays and clusters must align")
+    uniq = _stable_unique(cl)
+    g = len(uniq)
+    member = {u: np.flatnonzero(cl == u) for u in uniq}
+    point = float(statistic(*arrs))
+    if g < MIN_CLUSTERS_FOR_PERCENTILE:
+        warnings.warn(
+            f"cluster_bootstrap_statistic: {g} clusters is below "
+            f"{MIN_CLUSTERS_FOR_PERCENTILE}; the percentile interval is anti-conservative "
+            "there (see the coverage table in cluster_bootstrap_ci). Report n_clusters.",
+            UserWarning, stacklevel=2,
+        )
+    rng = np.random.default_rng(seed)
+    reps, failed = [], 0
+    for _ in range(int(n_boot)):
+        pick = rng.integers(0, g, g)
+        idx = np.concatenate([member[uniq[i]] for i in pick])
+        try:
+            reps.append(float(statistic(*[a[idx] for a in arrs])))
+        except Exception:  # noqa: BLE001 -- a resample can be degenerate; that is data, not a bug
+            failed += 1
+    reps = np.asarray([r for r in reps if np.isfinite(r)], dtype=float)
+    lo, hi = (float(np.quantile(reps, alpha / 2)), float(np.quantile(reps, 1 - alpha / 2)))         if reps.size else (float("nan"), float("nan"))
+    return {"point": point, "lo": lo, "hi": hi, "n": int(len(cl)), "n_clusters": int(g),
+            "n_boot": int(n_boot), "alpha": float(alpha), "method": "percentile",
+            "n_failed": int(failed + (int(n_boot) - failed - reps.size))}
 
 def dump_raw_points(path, rows, *, append: bool = False) -> str:
     """Persist raw per-(seed, fold/cohort/split) metric ``rows`` to a JSON list.
