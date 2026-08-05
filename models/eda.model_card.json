@@ -108,7 +108,7 @@
       "usable": 3.0
     },
     "fit_partition": "validation",
-    "evaluation_partition": "validation",
+    "evaluation_partition": "validation (store_v3) — the same split the temperature grid was minimized on; see held_out_ece for the held-out measurement",
     "grade_ece": [
       0.1105,
       0.0786
@@ -117,7 +117,38 @@
       0.1307,
       0.0284
     ],
-    "partition_note": "the ECE pairs above are measured on the SAME validation split the temperature grid was minimized on, so the post-scaling number is an optimization minimum and optimistic. Held-out ECE is not measured for this card; it needs a re-run of the calibration evaluation."
+    "partition_note": "the ECE pairs above are measured on the SAME validation split the temperature grid was minimized on, so the post-scaling number is an optimization minimum and optimistic. held_out_ece below is the held-out measurement, and it is the worst of the four shipped cards: no unseen-SUBJECT population of the training cohorts exists at all (every store_v3 EDA subject survives into store_v8 test), so the only held-out EDA windows are two cohorts store_v3 never had -- and there the grade head's post-scaling ECE is 0.5496 with 10.9% accuracy, i.e. the temperature makes calibration WORSE (0.4549 -> 0.5496) off-cohort.",
+    "held_out_ece": {
+      "partition": "data/store_v8 test split, restricted to subjects absent from both the train and val partitions of data/store_v3 (this graph's training store)",
+      "population_kind": "cross_cohort: every unseen subject belongs to PPG-DaLiA (EDA) or WESAD (EDA), cohorts absent from store_v3 -- so this is a cross-cohort number, NOT a within-distribution held-out one",
+      "n_windows": 742,
+      "n_subjects": 6,
+      "grade": [
+        0.4549,
+        0.5496
+      ],
+      "usable": [
+        0.7548,
+        0.6833
+      ],
+      "full_store_v8_test_partition": {
+        "n_windows": 1488,
+        "grade": [
+          0.1448,
+          0.2395
+        ],
+        "usable": [
+          0.3861,
+          0.3075
+        ],
+        "why_not_the_headline": "50.1% of these windows belong to subjects that were in store_v3's train or val partition; the other 49.9% are the two unseen cohorts, so this partition is a 50/50 blend of seen subjects and off-cohort ones and is not a held-out figure either way"
+      },
+      "reading": "EDA is the modality with no honest in-distribution held-out calibration number available from the locked corpus. Both populations reported here already exceed the validation ECE by 3x-7x. Treat the shipped 0.0786 as a fit-partition figure only.",
+      "pair_convention": "[pre_scaling, as_shipped], same as grade_ece/usable_ece above. The graph emits raw_logits/T, so the pre-scaling logits are recovered exactly as graph_logits * T -- no model was loaded and the baked-in temperature is unchanged.",
+      "estimator": "biosqa.xdomain.calibration.expected_calibration_error at its default n_bins=15 (equal-width top-1-confidence bins) -- the same function and bin count that produced grade_ece/usable_ece above, so the two columns are comparable",
+      "measured_by": "scripts/measure_heldout_calibration.py (onnxruntime forward over this .onnx; trains nothing, exports nothing)",
+      "source": "data/heldout_calibration.json"
+    }
   },
   "routing": "grade+usable <- raw trunk fused with host combined SQI+dynamics vector; grade = ordinal ordered-logit",
   "input_contract": {

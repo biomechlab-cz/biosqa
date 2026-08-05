@@ -102,7 +102,7 @@
       "usable": 5.556
     },
     "fit_partition": "validation",
-    "evaluation_partition": "validation",
+    "evaluation_partition": "validation (store_ppg4_tmb) — the same split the temperature grid was minimized on; see held_out_ece for the held-out measurement",
     "grade_ece": [
       0.0859,
       0.052
@@ -111,7 +111,37 @@
       0.1509,
       0.0283
     ],
-    "partition_note": "the ECE pairs above are measured on the SAME validation split the temperature grid was minimized on, so the post-scaling number is an optimization minimum and optimistic. Held-out ECE is not measured for this card; it needs a re-run of the calibration evaluation."
+    "partition_note": "the ECE pairs above are measured on the SAME validation split the temperature grid was minimized on, so the post-scaling number is an optimization minimum and optimistic. held_out_ece below is the held-out measurement: on 874 store_v8 test windows from 146 subjects this graph never saw, the grade head's post-scaling ECE is 0.1253 -- 2.41x the 0.052 above, the largest optimism gap of the four shipped cards. The usable head holds up (0.0465 vs 0.0283).",
+    "held_out_ece": {
+      "partition": "data/store_v8 test split, restricted to subjects absent from both the train and val partitions of data/store_ppg4_tmb (this graph's training store)",
+      "population_kind": "within_distribution: held-out SUBJECTS of all 4 cohorts the model trained on",
+      "n_windows": 874,
+      "n_subjects": 146,
+      "grade": [
+        0.2244,
+        0.1253
+      ],
+      "usable": [
+        0.0979,
+        0.0465
+      ],
+      "full_store_v8_test_partition": {
+        "n_windows": 2239,
+        "grade": [
+          0.1651,
+          0.1096
+        ],
+        "usable": [
+          0.1006,
+          0.054
+        ],
+        "why_not_the_headline": "61.0% of these windows belong to subjects that were in store_ppg4_tmb's train or val partition -- store.py::_subject_split re-shuffles each cohort's subject list per build, so a store_v8 test subject is not automatically unseen by this graph"
+      },
+      "pair_convention": "[pre_scaling, as_shipped], same as grade_ece/usable_ece above. The graph emits raw_logits/T, so the pre-scaling logits are recovered exactly as graph_logits * T -- no model was loaded and the baked-in temperature is unchanged.",
+      "estimator": "biosqa.xdomain.calibration.expected_calibration_error at its default n_bins=15 (equal-width top-1-confidence bins) -- the same function and bin count that produced grade_ece/usable_ece above, so the two columns are comparable",
+      "measured_by": "scripts/measure_heldout_calibration.py (onnxruntime forward over this .onnx; trains nothing, exports nothing)",
+      "source": "data/heldout_calibration.json"
+    }
   },
   "routing": "grade+usable <- raw trunk fused with host combined SQI+dynamics vector; grade = ordinal ordered-logit",
   "data": {

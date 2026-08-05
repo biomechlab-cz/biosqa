@@ -41,7 +41,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-__all__ = ["evaluate", "summarize_runs", "METRIC_KEYS"]
+__all__ = ["evaluate", "summarize_runs", "usable_auroc", "METRIC_KEYS"]
 
 # The scalar metrics every run reports (used to validate/aggregate run stores).
 METRIC_KEYS = (
@@ -271,6 +271,56 @@ def evaluate(
     out["labels"] = [int(x) for x in labels]
     out["class_names"] = list(class_names)
     return out
+
+
+def usable_auroc(y_true, y_prob) -> float:
+    """AUROC of the *usable* decision P(Q2)+P(Q3) against the truth ``Q >= 2``.
+
+    A reported quantity (LODO tables, deployment-parity checks) that the bundle
+    above does not produce: ``auroc_ovr_macro`` is one-vs-rest over four classes,
+    whereas deployment asks a single binary question — forward this window or
+    discard it — and scores it with the summed usable-class mass, not with an
+    argmax. Until 2026-08-05 it was hand-rolled in **ten** places (9 under
+    ``experiments/``, 1 in ``scripts/verify_deployment_parity.py``), all
+    semantically identical — the one exception to "every reported number is scored
+    by one frozen module" (``methods.tex``). This is that definition, moved in, and
+    **all ten call sites now import it** — zero local definitions remain anywhere in
+    ``experiments/``, ``scripts/`` or ``src/`` (pinned by
+    ``tests/test_metrics.py::test_no_module_redefines_the_frozen_usable_auroc``).
+    Every copy was verified bit-identical to this function before deletion, so no
+    published number differs. The unconditional claim is therefore supportable for
+    this quantity.
+
+    One RELATED-BUT-DIFFERENT quantity is deliberately not here:
+    ``scripts/verify_deployment_parity.py`` also computes a ``usable_head_auroc``,
+    which scores the *usable head's own* ``P(usable)`` rather than the grade-derived
+    collapse below. It is a diagnostic for that harness, appears in no manuscript
+    claim, and would be a different metric — not a restatement of this one.
+
+    Moved in, not rewritten: the body is the byte-for-byte expression from the
+    pre-move ``experiments/lodo_cutpoint.py``, so every historical value is
+    reproduced exactly — including the degenerate paths (an empty fold raises
+    ``ValueError`` from ``.min()``; a NaN/inf probability raises ``ValueError``
+    from sklearn). ``y_true`` is used *without* an ``np.asarray`` coercion for the
+    same reason: adding one would make a Python list return a number where the ten
+    originals raised ``TypeError``, and "add, never redefine" covers exceptions
+    too. Pass an ndarray of integer grades.
+
+    Returns NaN when the fold is single-class in the usable sense (all Q<2 or all
+    Q>=2) — common on a held-out LODO cohort — so callers must NaN-filter before
+    averaging, exactly as they already do for the per-arm aggregates.
+
+    Deliberately NOT a key of :func:`evaluate` and NOT in ``METRIC_KEYS``: it is
+    defined only on the fixed 4-class Q0..Q3 scale (it indexes columns 2 and 3),
+    while ``evaluate`` also serves binary and arbitrary ``labels``; and the
+    harness's own change-detector hashes ``evaluate``'s complete returned dict
+    (``tests/test_metrics.py::GOLDEN_SHA``), so a new key there would be a
+    contract change, not an addition. Call it alongside ``evaluate``.
+    """
+    yb = (y_true >= 2).astype(int)
+    if yb.min() == yb.max():
+        return float("nan")
+    return float(roc_auc_score(yb, y_prob[:, 2] + y_prob[:, 3]))
 
 
 def summarize_runs(run_metrics: list[dict], keys: Sequence[str] | None = None) -> dict:
