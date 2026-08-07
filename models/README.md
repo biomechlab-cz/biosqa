@@ -15,13 +15,14 @@ stack (see `app/pyproject.toml`).
 models/
   ecg.onnx
   ecg.model_card.json
-  ppg.onnx
-  ppg.model_card.json
-  eeg.onnx
-  eeg.model_card.json
   eda.onnx
   eda.model_card.json
 ```
+
+`eeg.*` and `ppg.*` follow the same contract and the app supports both signal
+types, but their weights are **not shipped here** — see
+[Licensing of the shipped weights](#licensing-of-the-shipped-weights). Drop your
+own pair in and the modality works with no code change.
 
 ## `model_card.json` schema (Plan 2 §11 handshake)
 
@@ -83,19 +84,26 @@ Rules (all validated loudly on load):
 - Every declared `output_name` must exist in the ONNX graph outputs, or load
   fails (card/graph mismatch).
 
-This directory ships the four canonical FP32 models (`ecg`/`eda`/`eeg`/`ppg`,
-each an `.onnx` + `.model_card.json`) in version control; the app loads
-`<modality>.onnx` directly. Any additional `.onnx`/`.model_card.json` files
-are build/release artifacts.
+This directory ships two FP32 models (`ecg` and `eda`, each an `.onnx` +
+`.model_card.json`) in version control; the app loads `<modality>.onnx`
+directly. Any additional `.onnx`/`.model_card.json` files are build/release
+artifacts.
 
 ## Licensing of the shipped weights
 
 The repository's MIT `LICENSE` covers the **app source code**. It does **not**
-grant rights over the `.onnx` weights here: they are derived from third-party
-datasets, some of which are credentialed-access (MIMIC-III derivatives, TUAR)
-or research/non-commercial only (WESAD). Per-model provenance and the inherited
-terms are in [`../LICENSE-MODELS`](../LICENSE-MODELS), and machine-readably in
-each card:
+grant rights over the `.onnx` weights here, which are derived from third-party
+datasets. Both shipped models were trained exclusively on sources whose terms
+are open and attribution-based (ODC-BY / CC BY 4.0 / BSD 3-Clause), verified
+individually against each provider's licence page, so both may be redistributed
+and used commercially **provided the dataset citations travel with them**.
+
+`eeg.onnx` and `ppg.onnx` are deliberately **not** in this directory. Their
+training corpora include credentialed-access (MIMIC-III derivatives),
+non-commercial (WESAD) and data-use-agreement (TUAR) material whose terms an
+openly-licensed weight release would not honour. Per-model provenance and the
+full reasoning are in [`../LICENSE-MODELS`](../LICENSE-MODELS), and
+machine-readably in each card:
 
 ```json
 "training_data_provenance": { "store": "...", "cohorts": [...], "digest": "sha256:..." | null },
@@ -106,6 +114,9 @@ each card:
 
 Both blocks are documentation only — `model_card.py` ignores unknown keys, so
 they carry no runtime behaviour. `training_data_hash` is a real SHA-256 digest
-only where the training store recorded a snapshot manifest (today: `eeg`); the
-other three carry a training-run nickname and say so in
-`training_data_provenance.digest_note`.
+only where the training store recorded a snapshot manifest, and **neither
+shipped model has one**: `ecg` was exported from `store_v2` and `eda` from
+`store_v3`, neither of which wrote a manifest, so both carry a training-run
+nickname and say so in `training_data_provenance.digest_note`. (The withdrawn
+`eeg` model was the only one with a real corpus digest.) `onnx_sha256` is
+unaffected — it is a digest of the shipped graph itself and is enforced at load.

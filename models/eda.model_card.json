@@ -26,15 +26,17 @@
     "note": "cohort list verified against the store's segment index; WESAD (EDA) and PPG-DaLiA (EDA) are part of the wider research corpus (store_v8) but NOT of this shipped model's training store"
   },
   "license": {
-    "code_license": "MIT (app/LICENSE) — covers the app source, not these weights",
+    "code_license": "MIT (app/LICENSE) -- covers the app source, not these weights",
     "weights_terms": "app/LICENSE-MODELS",
-    "redistribution": "review-required",
-    "commercial_use": "unverified",
+    "redistribution": "attribution-required",
+    "commercial_use": "permitted by every training source",
     "source_terms": [
-      "EDABE: research use (Zenodo release)",
-      "EDA-Artifact-Detection (UTD / AWW): research use"
+      "EDABE: CC BY 4.0 (Mendeley Data 10.17632/w8fxrg4pv5.2)",
+      "EDA-Artifact-Detection (UT Dallas): BSD 3-Clause",
+      "EDA-Artifact-Detection (Alan Walks Wales): BSD 3-Clause"
     ],
-    "note": "all three cohorts are openly downloadable research datasets, but none of their terms has been individually verified as permitting redistribution of derived weights; provenance statement, not legal advice"
+    "verified": "2026-08-07, individually against each provider licence page",
+    "note": "CC BY 4.0 and BSD 3-Clause are both permissive and explicitly permit redistribution of derived works. BSD 3-Clause additionally requires its copyright notice and disclaimer to accompany binary redistributions and forbids endorsement using the holders names; both are satisfied by carrying LICENSE-MODELS. Supersedes the earlier review-required/unverified statement, which predated per-source verification. Provenance statement, not legal advice."
   },
   "inputs": [
     "x_raw",
@@ -108,7 +110,7 @@
       "usable": 3.0
     },
     "fit_partition": "validation",
-    "evaluation_partition": "validation (store_v3) — the same split the temperature grid was minimized on; see held_out_ece for the held-out measurement",
+    "evaluation_partition": "validation (store_v3) \u2014 the same split the temperature grid was minimized on; see held_out_ece for the held-out measurement",
     "grade_ece": [
       0.1105,
       0.0786

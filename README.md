@@ -11,6 +11,10 @@ on-device neural quality model over a sliding window, and paints each segment wi
 quality grade — so you can see, at a glance, which segments of a recording are trustworthy
 and which are corrupted by motion, electrode noise, baseline wander, or dropout.
 
+> **Bundled models: ECG and EDA.** All four signal types load, plot and export; quality
+> grading needs a model in `models/`, and only these two can be redistributed under open
+> terms. See [The quality models](#the-quality-models).
+
 Built with **PySide6 (Qt 6) + QML**. Inference runs on the CPU via **ONNX Runtime** — no GPU,
 no cloud, no training dependencies. The models are compact enough to score a window in a few
 milliseconds.
@@ -98,9 +102,18 @@ constants hard-coded in the app. A missing or mismatched card is a **hard failur
 time** (loud, not silent): silently-different preprocessing between training and inference is
 the number-one way this kind of system quietly degrades.
 
-The four canonical models ship in `models/`. They are produced by a separate research/training
-pipeline (not part of this repository) and exported to the ONNX contract above — the app never
-imports training code and has no training dependencies.
+**Two models ship in `models/`: `ecg` and `eda`.** Both were trained exclusively on datasets
+whose published terms are open and attribution-based, so their weights can be redistributed
+with the app. EEG and PPG are fully supported signal types — they load, plot, and export — but
+their weights are **not** bundled, because those models were trained on credentialed-access
+(MIMIC-III), non-commercial (WESAD) and data-use-agreement (TUAR) cohorts whose terms an
+openly-licensed release would not honour. Opening such a recording shows the signal and reports
+that no model is bundled for that modality; supply your own conforming pair in `models/` and it
+works with no code change. See [`LICENSE-MODELS`](LICENSE-MODELS) for the per-dataset reasoning.
+
+The models are produced by a separate research/training pipeline (not part of this repository)
+and exported to the ONNX contract above — the app never imports training code and has no
+training dependencies.
 
 ### Input contract & pre-filtering
 
@@ -126,7 +139,7 @@ app/
     model/           # model_card.json parsing + validation
     workers/         # off-thread inference (QThreadPool)
     export/          # CSV / TSV / JSON / Parquet / WFDB / MAT exporters
-  models/            # the four <modality>.onnx + .model_card.json
+  models/            # shipped <modality>.onnx + .model_card.json (ecg, eda)
   dummy_data/        # small sample WFDB recordings (ECG / PPG / EEG / EDA)
   tests/             # unit tests (io / inference / model)
   docs/              # the documentation + landing site (Astro → GitHub Pages)

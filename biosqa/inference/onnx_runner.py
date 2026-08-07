@@ -37,6 +37,16 @@ except ImportError:  # pragma: no cover - onnxruntime is a required app dep; gua
 # over the batch axis, so chunking is exact, not an approximation (see _run_raw).
 _MAX_BATCH = 256
 
+#: Modalities whose weights this release actually ships, and those it deliberately does
+#: not. The application supports all four signal types; EEG and PPG weights are withheld
+#: because their training corpora carry redistribution terms an openly-licensed release
+#: cannot honour (PhysioNet credentialed MIMIC + non-commercial WESAD for PPG; the Temple
+#: NEDC agreement for EEG). See LICENSE-MODELS. These names drive only the error message
+#: a caller sees for a missing model -- dropping the files in enables the modality with no
+#: code change, so this is documentation of intent, not an allowlist.
+BUNDLED = frozenset({"ecg", "eda"})
+BUNDLED_ELSEWHERE = frozenset({"eeg", "ppg"})
+
 #: op types that only exist in an INT8-quantized graph. ORT's session API cannot report weight
 #: dtypes, and the `onnx` package is deliberately not an app dependency -- but an op type is stored
 #: verbatim in the serialized graph, so reading it off the artifact needs neither. Observing the file
@@ -127,9 +137,24 @@ class OnnxRunner:
         card_path = self.models_dir / f"{self.modality}.model_card.json"
         onnx_path = self.models_dir / f"{self.modality}.onnx"
         if not onnx_path.exists():
+            # Two different situations reach here and the message must fit both: a
+            # broken install, and a modality this release deliberately does not
+            # bundle. EEG and PPG are the latter -- their training corpora carry
+            # redistribution terms an openly-licensed release cannot honour, so the
+            # app supports the signals but ships no weights for them (LICENSE-MODELS).
+            withheld = self.modality in BUNDLED_ELSEWHERE
+            why = (
+                f"BioSQA Studio bundles weights for {', '.join(sorted(BUNDLED))} only; "
+                f"'{self.modality}' is withheld for data-licensing reasons (see "
+                f"LICENSE-MODELS). "
+                if withheld else
+                f"'{self.modality}' should ship with this release -- the install may be "
+                f"incomplete. "
+            )
             raise FileNotFoundError(
-                f"{onnx_path}: ONNX model not found -- see app/models/README.md "
-                "for the expected Plan 1 handshake artifacts"
+                f"No model is available for '{self.modality}'. {why}"
+                f"Drop a {onnx_path.name} and {card_path.name} into {self.models_dir} "
+                f"to enable it; the handshake contract is documented in models/README.md."
             )
 
         self.card = load_model_card(card_path)
@@ -144,9 +169,10 @@ class OnnxRunner:
         # Model identity is otherwise a free-text label: a swapped or corrupted .onnx would load happily
         # as long as the card said the right words. The structural checks below (modality / L_m / head
         # names / head widths) catch a different-ARCHITECTURE swap but not a same-architecture one --
-        # app/dist/.../eeg.onnx is a v4 graph of the same size (2,298,439) and the same shape contract
-        # as the v5 app/models/eeg.onnx, and only the digest tells them apart. Runs BEFORE the ORT
-        # session opens: refuse to load rather than predict from an unknown model.
+        # a stale v4 eeg.onnx under app/dist/ once had the same size (2,298,439) and the same shape
+        # contract as the v5 graph, and only the digest told them apart. Those EEG weights are no
+        # longer shipped, but the failure mode is generic and applies to user-supplied weights too.
+        # Runs BEFORE the ORT session opens: refuse to load rather than predict from an unknown model.
         self.card.verify_onnx(onnx_path)
         self.onnx_sha256 = sha256_file(onnx_path)
         self.precision = _graph_precision(onnx_path)

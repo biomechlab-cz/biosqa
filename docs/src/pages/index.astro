@@ -19,11 +19,11 @@ const features = [
 const modalities = [
   { m: 'ECG', c: 'var(--m-ecg)', d: 'Beat morphology, rhythm, baseline wander, motion.', spec: '10 s @ 250 Hz windows',
     path: 'M0 23 L18 23 L22 10 L26 36 L30 8 L34 23 L60 23 L66 22 L70 12 L74 34 L78 23 L110 23 L116 21 L120 10 L124 35 L128 23 L160 23 L168 22 L172 13 L176 33 L180 23 L210 23 L216 22 L220 11 L224 34 L228 23 L260 23' },
-  { m: 'PPG', c: 'var(--m-ppg)', d: 'Pulse morphology, motion and contact artifacts.', spec: 'own trained model',
+  { m: 'PPG', c: 'var(--m-ppg)', d: 'Pulse morphology, motion and contact artifacts.', spec: 'bring your own weights',
     path: 'M0 30 C 20 30, 26 8, 42 12 S 64 30, 86 30 C 106 30, 112 9, 128 13 S 150 30, 172 30 C 192 30, 198 8, 214 12 S 236 30, 260 30' },
-  { m: 'EEG', c: 'var(--m-eeg)', d: 'Muscle/EMG, powerline, electrode and blink artifacts.', spec: 'own trained model',
+  { m: 'EEG', c: 'var(--m-eeg)', d: 'Muscle/EMG, powerline, electrode and blink artifacts.', spec: 'bring your own weights',
     path: 'M0 23 Q 10 8 20 23 T 40 23 Q 50 34 60 23 T 80 20 Q 92 10 104 26 T 128 21 Q 140 33 152 22 T 176 24 Q 188 12 200 25 T 224 22 Q 236 30 248 23 T 260 23' },
-  { m: 'EDA', c: 'var(--m-eda)', d: 'Motion & HF contamination on a slow tonic base.', spec: 'own trained model',
+  { m: 'EDA', c: 'var(--m-eda)', d: 'Motion & HF contamination on a slow tonic base.', spec: '60 s @ 8 Hz windows',
     path: 'M0 38 C 40 38, 60 20, 110 18 S 150 24, 180 22 C 210 20, 230 14, 260 12' },
 ];
 
@@ -117,7 +117,13 @@ const cardJson = `{
   <section id="modalities" class="section band">
     <div class="container">
       <div class="microlabel" data-reveal>Modalities</div>
-      <h2 data-reveal>Four signals, four trained models.</h2>
+      <h2 data-reveal>Four signals, one contract.</h2>
+      <p class="text-2" data-reveal style="max-width:62ch;margin:-0.4rem 0 1.4rem">
+        Every modality is an independent model behind the same two-file contract. ECG and EDA
+        weights ship with the app; EEG and PPG open, plot and export, and grade as soon as you
+        supply your own weights — theirs are trained on cohorts whose licences forbid open
+        redistribution.
+      </p>
       <div class="mod-grid">
         {modalities.map((m) => (
           <div class="card mod" style={`--mc:${m.c}`} data-reveal>

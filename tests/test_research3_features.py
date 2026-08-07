@@ -304,8 +304,8 @@ def test_model_card_parses_conformal_only_where_shipped():
     ecg = load_model_card(models / "ecg.model_card.json")
     assert ecg.conformal_threshold is not None and abs(ecg.conformal_threshold - 0.9682) < 1e-6
     assert abs(ecg.grade_temperature - 0.4) < 1e-9 and abs(ecg.conformal_alpha - 0.1) < 1e-9
-    # PPG app model predates the conformal calibration → no threshold (feature stays off, no crash)
-    assert load_model_card(models / "ppg.model_card.json").conformal_threshold is None
+    # the EDA app model predates the conformal calibration → no threshold (feature stays off, no crash)
+    assert load_model_card(models / "eda.model_card.json").conformal_threshold is None
 
 
 def test_novelty_distance_flags_ood_and_explains():

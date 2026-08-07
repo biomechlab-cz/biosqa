@@ -23,7 +23,7 @@ On open, only the **header** is read — not the sample data. A recording of **a
 
 ## Auto-detect vs forcing a modality
 
-By default the **modality is auto-detected** — see [Modality detection](/biosqa/docs/modality-detection/). Each modality (ECG, PPG, EEG, EDA) has its own trained model, so the detected type determines which model scores the recording.
+By default the **modality is auto-detected** — see [Modality detection](/biosqa/docs/modality-detection/). Each modality has its own independent model, so the detected type determines which model scores the recording. All four types open, plot and export; grading requires a model in `models/`, and this release bundles **ECG and EDA** only — opening an EEG or PPG recording displays the signal and reports that no model is bundled for it. See [Models](/biosqa/docs/models/) for why, and for how to supply your own.
 
 You can also **force a modality** from the **Open** menu (`ecg`, `eeg`, `ppg`, `eda`) to score a recording against a specific model — useful when you already know the signal type or want to test one model deliberately.
 

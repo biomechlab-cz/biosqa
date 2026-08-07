@@ -14,7 +14,9 @@ models/<modality>.onnx              # float32[1, 1, L] input
 models/<modality>.model_card.json   # the contract
 ```
 
-Four canonical models ship with the app — **ecg**, **ppg**, **eeg**, and **eda** — each its own independent pair. The ONNX graph takes a single raw window shaped `float32[1, 1, L]`; the card supplies everything the app needs to build that window and interpret the output.
+**Two models ship with the app — `ecg` and `eda`** — each its own independent pair. The ONNX graph takes a single raw window shaped `float32[1, 1, L]`; the card supplies everything the app needs to build that window and interpret the output.
+
+All four signal types are fully supported for loading, plotting and export, but **`eeg` and `ppg` weights are not bundled**. Those models were trained on cohorts with credentialed access (MIMIC-III-Ext-PPG), non-commercial terms (WESAD) or a signed data use agreement (TUAR / TUH EEG), none of which an openly-licensed weight release can honour. Opening an EEG or PPG recording shows the signal and reports that no model is bundled for that modality. Drop in your own conforming `<modality>.onnx` + `<modality>.model_card.json` and it works with no code change — see [Bring your own model](#bring-your-own-model). The per-dataset reasoning is in [`LICENSE-MODELS`](https://github.com/sokolmarek/biosqa/blob/main/LICENSE-MODELS).
 
 ## What the card declares
 
@@ -50,7 +52,7 @@ Normalization, window length, and any second model input all come from the card 
 
 For dual-branch and fusion models, the host computes the **second input exactly as the card specifies** — the spectral channels or the feature vector are constructed to the card's declaration, not to a hard-coded recipe.
 
-> **EEG grade note.** EEG signal-quality grading is inherently the hardest of the four modalities. The shipped EEG grade + usable heads are trained only on the cohorts with expert per-window artifact annotation (TUAR, PhysioMotion), with confidence-based label cleaning; the artifact-type head uses all cohorts. Treat the EEG grade as advisory and lean on the usable gate and the artifact chips.
+> **EEG grade note.** EEG signal-quality grading is inherently the hardest of the four modalities, and it is also the one whose expert-annotated cohort (TUAR) carries a data use agreement — which is why no EEG weights are bundled here. If you supply your own, treat the EEG grade as advisory and lean on the usable gate and the artifact chips.
 
 > Feed **raw** signals. Preprocessing is the model's job, described by its card. A pre-filtered-but-corrupt signal can be under-flagged because the artifacts the model is trained to catch have already been partly smoothed away.
 

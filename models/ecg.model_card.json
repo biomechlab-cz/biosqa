@@ -29,14 +29,21 @@
     "digest_note": "no snapshot manifest was recorded for store_v2, so no training-corpus digest is available; 'training_data_hash' above is a training-run nickname, NOT a hash"
   },
   "license": {
-    "code_license": "MIT (app/LICENSE) — covers the app source, not these weights",
+    "code_license": "MIT (app/LICENSE) -- covers the app source, not these weights",
     "weights_terms": "app/LICENSE-MODELS",
     "redistribution": "attribution-required",
-    "commercial_use": "no restriction known from the training sources",
+    "commercial_use": "permitted by every training source",
     "source_terms": [
-      "all training cohorts are open-access PhysioNet datasets (ODC-BY / CC BY family)"
+      "PhysioNet/CinC Challenge 2011: Open Data Commons Attribution v1.0",
+      "European ST-T Database: Open Data Commons Attribution v1.0",
+      "MIT-BIH Malignant Ventricular Ectopy DB: Open Data Commons Attribution v1.0",
+      "MIT-BIH Noise Stress Test DB: Open Data Commons Attribution v1.0",
+      "MIT-BIH Supraventricular Arrhythmia DB: Open Data Commons Attribution v1.0",
+      "BUT QDB: CC BY 4.0",
+      "PTB-XL: CC BY 4.0"
     ],
-    "note": "provenance statement, not legal advice; verify each source's current terms before redistributing"
+    "verified": "2026-08-07, individually against each provider licence page",
+    "note": "all seven sources are open access with no DUA, no credentialing and no non-commercial clause; every one requires ATTRIBUTION, so an MIT notice alone is not sufficient. Provenance statement, not legal advice."
   },
   "inputs": [
     "x_raw",
@@ -121,7 +128,7 @@
       "usable": 3.5484
     },
     "fit_partition": "validation",
-    "evaluation_partition": "validation (store_v2) — the same split the temperature grid was minimized on; see held_out_ece for the held-out measurement",
+    "evaluation_partition": "validation (store_v2) \u2014 the same split the temperature grid was minimized on; see held_out_ece for the held-out measurement",
     "grade_ece": [
       0.2557,
       0.0654
