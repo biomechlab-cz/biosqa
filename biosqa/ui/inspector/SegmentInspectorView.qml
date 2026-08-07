@@ -64,6 +64,15 @@ Rectangle {
 
     // real decimated samples for the selected segment's time range (null until fetched)
     property var segCurve: null
+
+    //: " · <channel>" when naming the source trace matters, "" on a single-lane recording.
+    //: curveForRange reports which channel it served; the grades and this envelope both describe
+    //: the ANALYZED channel, so on a multi-channel record the reader must be told which one — the
+    //: same misleading-attribution class WaveformChart's tooltip and quality bands already fixed.
+    readonly property string channelSuffix:
+        (segCurve && segCurve.channel && (signalView.laneCount > 1
+                                          || (signalView.laneChannels || []).indexOf(segCurve.channel) < 0))
+        ? (" · " + segCurve.channel) : ""
     onSegChanged: {
         userTier = ""
         segCurve = (seg && signalView.durationSec > 0)
@@ -360,8 +369,13 @@ Rectangle {
                         }
                         Item { Layout.fillWidth: true }
                         Text {
+                            // Name the channel whenever the recording has more than one lane: this
+                            // envelope is always the ANALYZED channel (the one the grades describe),
+                            // which need not be the lane on screen and may be hidden altogether.
+                            // Same convention as WaveformChart's hover tooltip (`valueSuffix`).
                             text: root.segCurve
-                                  ? (root.segCurve.lo.toFixed(2) + " … " + root.segCurve.hi.toFixed(2) + " a.u.")
+                                  ? (root.segCurve.lo.toFixed(2) + " … " + root.segCurve.hi.toFixed(2)
+                                     + " a.u." + root.channelSuffix)
                                   : "—"
                             color: Theme.textMuted
                             font.family: Theme.fontMono

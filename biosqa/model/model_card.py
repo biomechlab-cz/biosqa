@@ -98,8 +98,10 @@ class ModelCard:
 
     @property
     def grade_temperature(self) -> float:
-        """Temperature-scaling factor for the grade head (1.0 = none). The conformal threshold was
-        calibrated on temperature-scaled grade probabilities, so it MUST be applied before APS decoding."""
+        """Temperature-scaling factor for the grade head (1.0 = none) — DOCUMENTATION of the constant
+        baked into the ONNX graph, not an instruction. The graph's final grade path divides the
+        log-probabilities by this value, so the softmax the session returns is already the scaled one
+        the conformal threshold was calibrated on; re-applying it host-side would scale twice."""
         try:
             return float(self.calibration["temperatures"]["grade"])  # type: ignore[index]
         except (TypeError, KeyError, ValueError):
@@ -109,9 +111,9 @@ class ModelCard:
     def usable_temperature(self) -> float:
         """Temperature-scaling factor for the binary usable/unusable head (1.0 = none).
 
-        Every shipped card calibrates this alongside ``grade``; applying it is what makes the
-        usable head's probabilities mean what they say. Absent/unparseable -> 1.0 (identity),
-        which is the honest no-op, not a guess.
+        Every shipped card calibrates this alongside ``grade``, and — like ``grade`` — the constant is
+        BAKED into the graph, so this documents what the head's probabilities already mean rather than
+        something to apply. Absent/unparseable -> 1.0 (identity), which is the honest no-op, not a guess.
         """
         try:
             return float(self.calibration["temperatures"]["usable"])  # type: ignore[index]
@@ -170,9 +172,14 @@ class ModelCard:
         words. Callers should run this before opening the session -- refuse to run rather than
         predict from an unknown model.
 
-        Returns the verified digest, or ``None`` when the card carries no digest (every card
-        shipped before this field existed): verification is then SKIPPED, never faked. A
-        mismatch is a hard ``ModelCardError``.
+        Returns the verified digest, or ``None`` when the card carries no digest: verification is
+        then SKIPPED, never faked. A mismatch is a hard ``ModelCardError``.
+
+        All four shipped cards now carry a digest, so this is live on every real load. It catches the
+        one substitution the runner's other checks cannot: ``app/dist/.../eeg.onnx`` is a v4 graph of
+        exactly the same byte SIZE (2,298,439) as the v5 ``app/models/eeg.onnx``, with the same
+        modality, L_m (1280), head names and head widths -- identical under every structural check,
+        and distinguishable only by digest (2f10ee74... vs cf80f542...).
         """
         if self.onnx_sha256 is None:
             return None

@@ -15,6 +15,7 @@ const cols = [
     { t: 'Datasets & attribution', u: withBase('/docs/contributing/') },
     { t: 'Model cards', u: withBase('/docs/models/') },
     { t: 'License (MIT)', u: SITE.repo + '/blob/main/LICENSE' },
+    { t: 'Model weights: terms', u: SITE.repo + '/blob/main/LICENSE-MODELS' },
   ]},
 ];
 ---
@@ -34,7 +35,7 @@ const cols = [
     ))}
   </div>
   <div class="container footer-deps muted">
-    Dependencies: PySide6/Qt (LGPLv3) · ONNX Runtime (MIT) · wfdb (MIT) · MNE-Python (BSD-3) · NumPy/SciPy · Zarr · PyArrow/Polars · tsdownsample. Models trained on public biosignal datasets under the PhysioNet umbrella; some sources (e.g. TUAR/TUH EEG) require credentialed access and are not redistributed.
+    Dependencies: PySide6/Qt (LGPLv3) · ONNX Runtime (MIT) · wfdb (MIT) · MNE-Python (BSD-3) · NumPy/SciPy · Zarr · PyArrow. MIT covers the app code, not the model weights: they are trained on public biosignal datasets and inherit those sources' terms — some (e.g. TUAR/TUH EEG, MIMIC-III-Ext-PPG) require credentialed access and are not redistributed, and WESAD is research-use only. See LICENSE-MODELS.
   </div>
 </footer>
 

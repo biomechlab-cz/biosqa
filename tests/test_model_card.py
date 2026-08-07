@@ -281,15 +281,69 @@ def test_verify_onnx_missing_file_raises(tmp_path):
 
 
 def test_shipped_cards_still_load(tmp_path):
-    # The cards actually shipped in app/models carry no onnx_sha256; adding the field must
-    # not have broken them. Guards the "optional" half of the contract against a future
-    # tightening that would make the digest mandatory.
+    # Every shipped card must pin its .onnx by digest, and that digest must match the artifact
+    # sitting next to it. Without this the gate silently reverts to inert the next time an
+    # exporter forgets the field -- which is exactly the state this replaced (all four cards
+    # parsed to None, so verify_onnx() returned None on every real load).
     models_dir = Path(__file__).resolve().parents[1] / "models"
     cards = sorted(models_dir.glob("*.model_card.json"))
     if not cards:
         pytest.skip("no shipped model cards in app/models")
     for path in cards:
         card = load_model_card(path)
-        assert card.onnx_sha256 is None
+        onnx = models_dir / f"{card.modality}.onnx"
+        assert card.onnx_sha256 is not None, f"{path.name} ships without an onnx_sha256 digest"
         assert card.usable_temperature > 0
-        assert card.verify_onnx(models_dir / f"{card.modality}.onnx") is None
+        assert card.verify_onnx(onnx) == card.onnx_sha256 == sha256_file(onnx)
+
+
+def test_shipped_card_rejects_a_corrupted_copy_of_its_own_onnx(tmp_path):
+    # End-to-end proof the shipped digests actually gate, using a real card against a SCRATCH
+    # copy of its .onnx (the originals are never touched). One byte short is the mildest
+    # possible corruption and the structural checks -- modality, L_m, head names, head widths
+    # -- are all still satisfied by it; only the digest sees it.
+    models_dir = Path(__file__).resolve().parents[1] / "models"
+    src = models_dir / "ecg.onnx"
+    if not src.is_file():
+        pytest.skip("no shipped ecg.onnx in app/models")
+    card = load_model_card(models_dir / "ecg.model_card.json")
+    truncated = tmp_path / "ecg.onnx"
+    truncated.write_bytes(src.read_bytes()[:-1])
+    with pytest.raises(ModelCardError, match="SHA-256 mismatch"):
+        card.verify_onnx(truncated)
+
+
+def test_pyinstaller_spec_bundles_the_model_licence():
+    """The frozen bundle must carry LICENSE-MODELS alongside the weights.
+
+    Lives with the model-card tests because it guards the same shipped-model payload: the
+    spec's ``models/*`` glob reaches the .onnx files but nothing at the app root, so a release
+    built before this would ship PPG/EDA/EEG weights -- which inherit MIMIC/WESAD/TUAR terms --
+    with only the MIT app licence. Parsed rather than executed: the spec needs PyInstaller's
+    injected globals (``SPECPATH``, ``Analysis``) to run.
+    """
+    import ast
+
+    spec = Path(__file__).resolve().parents[1] / "build" / "biosqa.spec"
+    source = spec.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    analysis = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Analysis"
+    )
+    datas = next(kw.value for kw in analysis.keywords if kw.arg == "datas")
+    referenced = {n.id for n in ast.walk(datas) if isinstance(n, ast.Name)}
+
+    # The licence must arrive through a name that Analysis(datas=...) actually consumes --
+    # a LICENSE-MODELS mention elsewhere in the spec would bundle nothing.
+    assigned = {
+        target.id: ast.get_source_segment(source, node.value)
+        for node in tree.body if isinstance(node, ast.Assign)
+        for target in node.targets if isinstance(target, ast.Name)
+    }
+    carriers = [n for n in referenced if "LICENSE-MODELS" in (assigned.get(n) or "")]
+    assert carriers, (
+        "build/biosqa.spec does not bundle LICENSE-MODELS into Analysis(datas=...); "
+        f"datas references {sorted(referenced)}"
+    )

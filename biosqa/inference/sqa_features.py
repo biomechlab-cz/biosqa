@@ -43,7 +43,12 @@ def _as_rows(X) -> np.ndarray:
         X = X[:, 0, :]
     if X.ndim == 1:
         X = X[None, :]
-    return X
+    # Scrub non-finite samples ONCE, here: a single NaN/Inf anywhere used to abort
+    # the whole batch (np.clip(nan, 1, c).astype(int64) -> INT64_MIN in
+    # _dispersion_entropy, whose pattern index then blows up np.bincount), so one
+    # invalid sample in a user's file graded zero windows for the entire record.
+    # A no-op for finite input, so every store-validated feature value is unchanged.
+    return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def _zrows(X: np.ndarray) -> np.ndarray:
@@ -288,7 +293,11 @@ def _dispersion_entropy(z, c=6, m=2):
     NCDF (numpy-only), form m-length dispersion patterns, normalized Shannon entropy.
     Encodes amplitude LEVEL and order together (perm-entropy is order-only)."""
     N, L = z.shape
-    cls = np.clip(np.ceil(c / (1.0 + np.exp(-1.702 * z))), 1, c).astype(np.int64) - 1  # 0..c-1
+    # np.clip does NOT tame a NaN, and the int64 cast then yields INT64_MIN, whose
+    # pattern index makes np.bincount raise for the whole batch. _as_rows already
+    # scrubs, but keep the cast itself total for direct callers of this helper.
+    lvl = np.ceil(c / (1.0 + np.exp(-1.702 * z)))
+    cls = np.clip(np.where(np.isfinite(lvl), lvl, 1.0), 1, c).astype(np.int64) - 1  # 0..c-1
     pat = np.zeros((N, L - m + 1), dtype=np.int64)
     for k in range(m):
         pat += cls[:, k:L - m + 1 + k] * (c ** k)
@@ -303,7 +312,16 @@ def _rqa_determinism(z, m=3, tau=1, L_ds=128, rr=0.12, lmin=2):
     """Scale-invariant scalar recurrence-quantification (NOT the killed full-native RQA):
     downsample to L_ds, m-dim delay embed, threshold distances at the rr-percentile
     (fixed recurrence rate -> auto scale-invariant), report %determinism + mean/longest
-    diagonal-line length (trajectory repeatability; motion destroys it)."""
+    diagonal-line length (trajectory repeatability; motion destroys it).
+
+    CONVENTION (audit 2026-08): ``rqa_det`` INCLUDES the line of identity (k=0) in
+    both the diagonal-point count and ``rec``, unlike the textbook %DET. Because
+    ``rr`` fixes the recurrence rate and ``L_ds``/``m``/``tau`` fix M=126 for every
+    real window, this is an exact affine map of the LOI-excluded value
+    (``shipped = 0.93389*standard + 0.06611``, residual <1e-15), fully absorbed by
+    the baked per-feature standardization — so it changes no model output, but the
+    raw value is NOT comparable to published %DET. Switching to the standard
+    definition would change a shipped feature value and force a re-export."""
     N = len(z)
     det = np.zeros(N); mdl = np.zeros(N); ldl = np.zeros(N)
     for i in range(N):
@@ -354,9 +372,19 @@ def _jump_ratio(z):
 
 
 def _ordinal_transition(z, m=3, tau=1):
-    """Sequential structure of the ordinal-pattern symbol stream that permutation
-    entropy discards: forbidden-pattern fraction, self-transition probability, and
-    first-order transition-matrix entropy (a distinct determinism fingerprint)."""
+    """Ordinal-pattern symbol statistics: forbidden-pattern fraction and
+    self-transition probability (both genuinely sequential, discarded by
+    permutation entropy) plus ``op_trans_ent``.
+
+    NAMING DEBT (audit 2026-08): ``op_trans_ent`` is NOT a transition-matrix
+    entropy — no transition matrix is built. ``tc`` below is a bincount of the
+    MARGINAL pattern codes, so the column is exactly the normalized Bandt-Pompe
+    permutation entropy at m=3, tau=1 (identical to
+    ``nonlinear_features._perm_entropy(z, 3)`` to <4e-12). The column name is
+    load-bearing: it is baked into the ppg/eeg/eda fusion cards' ``feat_names``
+    and pinned by the app's feature contract, so renaming it (or computing the
+    real m!xm! transition entropy) requires re-exporting all three models. Read
+    it as permutation entropy until then."""
     from math import factorial
     N, L = z.shape; nfac = factorial(m)
     # rank-order code per m-window -> pattern id via Lehmer-ish encoding

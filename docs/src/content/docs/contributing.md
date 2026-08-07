@@ -7,9 +7,22 @@ BioSQA Studio is open source under a permissive license, with a deliberately nar
 
 ## License
 
-BioSQA Studio is released under the **MIT License**, © Marek Sokol. You are free to use, modify, and redistribute the app subject to the license terms and the retention of the copyright and permission notice.
+The **app source code** is released under the **MIT License**, © Marek Sokol. You are free to use, modify, and redistribute the code subject to the license terms and the retention of the copyright and permission notice.
 
 > BioSQA Studio is a research and engineering tool, **not a medical device**. The MIT license disclaims warranty; nothing here constitutes clinical validation.
+
+### The model weights are not MIT
+
+The MIT grant covers the code, **not the trained `.onnx` weights** shipped in `models/`. Those are derived from third-party biosignal datasets, and some of those sources carry access or use restrictions that the weights inherit:
+
+| Model | Restriction inherited from |
+| --- | --- |
+| `eeg.onnx` | **TUAR / TUH EEG** — signed Temple data use agreement; the data may not be redistributed |
+| `ppg.onnx` | **MIMIC-III-Ext-PPG** — PhysioNet credentialed access; **WESAD** — research use, no commercial use |
+| `eda.onnx` | research-use-only cohorts; redistribution terms for derived weights unverified |
+| `ecg.onnx` | open-access PhysioNet cohorts only — attribution required, no access restriction known |
+
+Per-model provenance is in [`LICENSE-MODELS`](https://github.com/sokolmarek/biosqa/blob/main/LICENSE-MODELS) in the repository root, and machine-readably in the `license` block of each model card. It is a provenance statement, **not legal advice**: check each source's current terms before redistributing the weights or using them commercially.
 
 ## Third-party licenses
 
@@ -71,6 +84,8 @@ Contributions are welcome. Help is most valuable in two areas:
 
 ## Datasets & attribution
 
-The per-modality models were trained on public biosignal datasets, primarily under the **PhysioNet** umbrella. Some of these sources — for example **TUAR / TUH EEG** — require **credentialed access** and are therefore **not redistributed** with the app.
+The per-modality models were trained on public biosignal datasets, primarily under the **PhysioNet** umbrella — for ECG: CinC-2011, BUT QDB, European ST-T, MIT-BIH VFDB/NSTDB/SVDB and PTB-XL; for PPG: BUT PPG, PPG-DaLiA, WESAD and MIMIC-III-Ext-PPG; for EEG: TUAR, PhysioMotion, Phantom-EEG, Mind-in-Motion and Motion-Artifact fNIRS+EEG; for EDA: EDABE and EDA-Artifact-Detection (UTD + AWW), with WESAD and PPG-DaLiA in the wider research corpus. The full citation list is in the repository [README](https://github.com/sokolmarek/biosqa#datasets).
+
+Some of these sources — for example **TUAR / TUH EEG** and **MIMIC-III-Ext-PPG** — require **credentialed access** or a signed agreement, and are therefore **not redistributed** with the app. As noted above, the derived weights inherit those terms.
 
 We cite dataset provenance openly. If you build on or extend the models, please carry that attribution forward and respect the access terms of each source.

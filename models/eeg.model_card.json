@@ -11,8 +11,37 @@
   "normalization": {
     "method": "none"
   },
-  "training_data_hash": "eeg-multihead-store_v8-expert-grade",
+  "training_data_hash": "sha256:6619de7edda6f96425ed837c969bca84ad75159d312b0edc845ae9b11fbbea48",
   "model_version": "v5-multihead-expert-grade-cleaned",
+  "onnx_sha256": "cf80f542d817f74e64ff03b17230dfe6602b0edd4591ad3f2abba20fb23f1ddc",
+  "training_data_provenance": {
+    "store": "data/store_v8",
+    "training_run": "eeg-multihead-store_v8-expert-grade",
+    "digest": "sha256:6619de7edda6f96425ed837c969bca84ad75159d312b0edc845ae9b11fbbea48",
+    "digest_of": "data/store_v8 segments.parquet (the window/label index)",
+    "digest_source": "data/store_v8/snapshot_manifest.json: hashes.segments_sha256",
+    "waveforms_tree_sha256": "45df592d0245020dfb805f3651520601c7ff603396d38e313db9ef747ac3e405",
+    "cohorts": [
+      "TUAR",
+      "PhysioMotion",
+      "Phantom-EEG",
+      "Mind-in-Motion",
+      "Motion-Artifact EEG"
+    ],
+    "note": "grade+usable heads train on TUAR+PhysioMotion only (see grade_training); the type head uses all five cohorts. This is the only shipped card whose training store carries a snapshot manifest, so it is the only one with a real digest."
+  },
+  "license": {
+    "code_license": "MIT (app/LICENSE) — covers the app source, not these weights",
+    "weights_terms": "app/LICENSE-MODELS",
+    "redistribution": "restricted",
+    "commercial_use": "unverified",
+    "source_terms": [
+      "TUAR (TUH EEG Artifact Corpus): signed Temple University data use agreement required; the data may not be redistributed and the agreement does not address derived weights",
+      "PhysioMotion (ds006386), Phantom-EEG (ds004784), Mind-in-Motion (ds004625): CC0 (OpenNeuro)",
+      "Motion-Artifact fNIRS+EEG: open access (PhysioNet)"
+    ],
+    "note": "provenance statement, not legal advice; verify each source's current terms before redistributing"
+  },
   "inputs": [
     "x_raw",
     "x_feat"
@@ -102,7 +131,7 @@
       "usable": 5.6846
     },
     "fit_partition": "validation",
-    "evaluation_partition": "test",
+    "evaluation_partition": "test (store_v8), restricted to the TUAR+PhysioMotion expert-grade cohorts these heads train on — the only shipped card whose reported ECE was already held out",
     "grade_ece": [
       0.1269,
       0.0598
@@ -120,6 +149,37 @@
         0.1668,
         0.0309
       ]
+    },
+    "held_out_ece": {
+      "partition": "data/store_v8 test split, TUAR+PhysioMotion — the same population grade_ece/usable_ece above report, re-measured through the shipped ONNX graph rather than the pre-export torch module",
+      "population_kind": "within_distribution: this graph trained on store_v8, so its own test split shares no subject with train or val (0 of 27 test subjects seen, measured)",
+      "n_windows": 1215,
+      "n_subjects": 21,
+      "grade": [
+        0.127,
+        0.0598
+      ],
+      "usable": [
+        0.1625,
+        0.0529
+      ],
+      "replication_note": "this card needed no correction — the graph reproduces its own reported pair to within 0.0007 (grade 0.1269 -> 0.1270, usable 0.1632 -> 0.1625), which is what validates the harness that re-measured the other three cards",
+      "all_cohorts_store_v8_test": {
+        "n_windows": 3209,
+        "grade": [
+          0.099,
+          0.2171
+        ],
+        "usable": [
+          0.33,
+          0.1489
+        ],
+        "why_not_the_headline": "the grade and usable heads are trained on TUAR+PhysioMotion only (grade_training below); the other three cohorts carry condition-derived proxy grades with no native ordinal quality scale, and on them the baked-in temperature makes grade calibration worse, not better (0.099 -> 0.2171). Reported so the cost of running this graph outside its label domain is on the card."
+      },
+      "pair_convention": "[pre_scaling, as_shipped], same as grade_ece/usable_ece above. The graph emits raw_logits/T, so the pre-scaling logits are recovered exactly as graph_logits * T -- no model was loaded and the baked-in temperature is unchanged.",
+      "estimator": "biosqa.xdomain.calibration.expected_calibration_error at its default n_bins=15 (equal-width top-1-confidence bins) -- the same function and bin count that produced grade_ece/usable_ece above, so the two columns are comparable",
+      "measured_by": "scripts/measure_heldout_calibration.py (onnxruntime forward over this .onnx; trains nothing, exports nothing)",
+      "source": "data/heldout_calibration.json"
     }
   },
   "routing": "grade+usable+type <- raw trunk fused with host combined vector; grade = ordinal ordered-logit; type = multilabel",

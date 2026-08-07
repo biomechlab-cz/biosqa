@@ -1,3 +1,9 @@
+# ---------------------------------------------------------------------------
+# GENERATED FILE — do not edit here.
+# Verbatim copy of <monorepo>/scripts/<this name>, with one transform: the
+# sys.path bootstrap points at <root> (this package's layout puts biosqa/ at
+# the root) instead of <root>/src. Regenerate: python scripts/sync_from_src.py
+# ---------------------------------------------------------------------------
 """Train + CALIBRATE + export a deployable multi-head model for every modality.
 
 For each of {ecg, ppg, eeg, eda}: train the 3-level multi-task model on the store,
@@ -18,7 +24,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from biosqa.data.artifact_labels import to_multihot  # noqa: E402
 from biosqa.data.harmonize import ARTIFACT_TYPES, QUALITY_NAMES  # noqa: E402
@@ -121,7 +127,11 @@ def export_modality(store, mod, epochs, out_dir, seed, q_loss=None, n_synth=6000
     tr = make_multitask_dataset(Xtr, ytr, Ttr, mtr, grade_mask=gm_tr); va = make_multitask_dataset(Xva, yva, Tva, mva)
     fit_multitask(model, DataLoader(tr, batch_size=128, shuffle=True), DataLoader(va, batch_size=256),
                   modality=mod, n_classes=4, artifact_types=list(ARTIFACT_TYPES), device=DEVICE,
-                  epochs=epochs, q_loss=q_loss, q_loss_tau=2.0, class_weights=class_weights(ytr),
+                  # weights over the GRADE-SUPERVISED rows only: the synthetic windows
+                  # appended above carry proxy grades and are masked out of the grade
+                  # loss, so folding them into the statistic mis-weights the real grades
+                  # (ECG: Q1 under-weighted 3.6x). Only takes effect on re-export.
+                  epochs=epochs, q_loss=q_loss, q_loss_tau=2.0, class_weights=class_weights(ytr[gm_tr]),
                   type_pos_weight=tpw, bin_weight=0.5, type_weight=0.5, monitor="macro_f1",
                   patience=8, amp=(DEVICE == "cuda"))
     print(f"[{mod}] grade-head loss = {q_loss} | ordinal-cutpoint head = {ordinal_grade}", flush=True)
@@ -148,18 +158,40 @@ def export_modality(store, mod, epochs, out_dir, seed, q_loss=None, n_synth=6000
     T_q, ece0, ece1, q_status = guarded_T(ql, yva)
     T_b, be0, be1, b_status = guarded_T(bl, yb) if bl is not None else (1.0, 0.0, 0.0, "none")
     q_thr = conf.calibrate_threshold(cal.apply_temperature(ql, T_q), yva, alpha=0.1)
+
+    # T is a 59-candidate ECE grid minimised on val — the SAME split used for early
+    # stopping — so the val-fit ECE is a fit-set minimum (~1.7x optimistic on ECG).
+    # Report the untouched TEST partition in the card, labelled, and keep the val
+    # numbers under `optimization_ece`. Matches export_ecg_dualbranch/export_fusion.
+    Xte, yte, _, _ = load_split(store, mod, "test")
+    eval_part = "test" if len(Xte) else "validation"
+    if len(Xte):
+        qlt, blt = head_logits(model, Xte, mod)
+        ybt = (yte >= 2).astype(int)
+        qt0 = cal.expected_calibration_error(cal.apply_temperature(qlt, 1.0), yte)
+        qt1 = cal.expected_calibration_error(cal.apply_temperature(qlt, T_q), yte)
+        bt0, bt1 = (cal.expected_calibration_error(cal.apply_temperature(blt, 1.0), ybt),
+                    cal.expected_calibration_error(cal.apply_temperature(blt, T_b), ybt)) if blt is not None else (0.0, 0.0)
+    else:  # no test partition for this modality -> be explicit that the card is fit-set
+        qt0, qt1, bt0, bt1 = ece0, ece1, be0, be1
     calib = {"temperatures": {"grade": round(T_q, 4), "usable": round(T_b, 4)},
-             "grade_ece_before": round(ece0, 4), "grade_ece_after": round(ece1, 4),
-             "grade_temp": q_status, "usable_temp": b_status, "usable_ece_before": round(be0, 4),
-             "usable_ece_after": round(be1, 4), "method": "temperature_scaling(do-no-harm)"}
-    ood = {"method": "conformal_aps", "grade_nonconformity_threshold": round(float(q_thr), 4), "alpha": 0.1}
+             "fit_partition": "validation", "evaluation_partition": eval_part,
+             "grade_ece": [round(qt0, 4), round(qt1, 4)],
+             "usable_ece": [round(bt0, 4), round(bt1, 4)],
+             "optimization_ece": {"grade": [round(ece0, 4), round(ece1, 4)],
+                                  "usable": [round(be0, 4), round(be1, 4)]},
+             "grade_temp": q_status, "usable_temp": b_status,
+             "method": "temperature_scaling(do-no-harm)"}
+    ood = {"method": "conformal_aps", "grade_nonconformity_threshold": round(float(q_thr), 4),
+           "alpha": 0.1, "fit_partition": "validation"}
 
     v = export_and_verify_multihead(
         model, mod, L, float(fs), out_dir, class_order=[QUALITY_NAMES[i] for i in range(4)],
         artifact_class_order=list(ARTIFACT_TYPES), temperature={"q": T_q, "binary": T_b},
         calibration=calib, ood=ood, model_version="v2-calibrated", quantize=False)
     print(f"[{mod}] outputs={v['outputs']} parity={v['passes_parity']} fp32={v.get('fp32_latency_ms', float('nan')):.2f}ms | "
-          f"grade T={T_q:.2f}({q_status}) ECE {ece0:.3f}->{ece1:.3f} | usable T={T_b:.2f}({b_status}) ECE {be0:.3f}->{be1:.3f} | conf_thr={q_thr:.3f}")
+          f"grade T={T_q:.2f}({q_status}) fit(val) ECE {ece0:.3f}->{ece1:.3f}, {eval_part} {qt0:.3f}->{qt1:.3f} | "
+          f"usable T={T_b:.2f}({b_status}) fit(val) ECE {be0:.3f}->{be1:.3f}, {eval_part} {bt0:.3f}->{bt1:.3f} | conf_thr={q_thr:.3f}")
     return v
 
 
@@ -180,8 +212,9 @@ def main():
     for mod, v in results.items():
         if v is None:
             print(f"  {mod}: skipped"); continue
+        c = v["model_card"]["calibration"]
         print(f"  {mod}: parity={v['passes_parity']} outputs={len(v['outputs'])} "
-              f"ECE {v['model_card']['calibration']['grade_ece_before']:.3f}->{v['model_card']['calibration']['grade_ece_after']:.3f}")
+              f"grade ECE({c['evaluation_partition']}) {c['grade_ece'][0]:.3f}->{c['grade_ece'][1]:.3f}")
     if args.copy_to_app:
         import shutil
         app = Path("app/models")

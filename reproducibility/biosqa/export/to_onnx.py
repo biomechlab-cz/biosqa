@@ -7,6 +7,7 @@ quantization (guidance for transformer backbones), and times CPU inference.
 """
 from __future__ import annotations
 
+import hashlib
 import time
 from pathlib import Path
 
@@ -16,7 +17,8 @@ import torch
 from ..models.model import BioSQAModel, SingleModalityExport
 
 __all__ = ["export_onnx", "parity_check", "quantize_dynamic_onnx", "cpu_latency_ms", "export_and_verify",
-           "export_multihead_onnx", "parity_check_multihead", "write_model_card", "export_and_verify_multihead"]
+           "export_multihead_onnx", "parity_check_multihead", "write_model_card", "export_and_verify_multihead",
+           "sha256_file"]
 
 _HEAD_OUTPUT_NAME = {"q": "q_logits", "binary": "bin_logits", "type": "type_logits"}
 
@@ -76,21 +78,27 @@ def parity_check(
 
 
 def quantize_dynamic_onnx(in_path: str | Path, out_path: str | Path) -> Path:
+    import tempfile
+
     from onnxruntime.quantization import QuantType, quantize_dynamic
 
     in_path, out_path = Path(in_path), Path(out_path)
     # ORT-recommended: shape-infer + fold constants first so the dynamic quantizer
-    # doesn't trip the version converter on dynamo-exported graphs.
-    src = in_path
-    try:
-        from onnxruntime.quantization.shape_inference import quant_pre_process
+    # doesn't trip the version converter on dynamo-exported graphs. The pre-processed
+    # graph is still FP32, so it goes to a scratch dir — writing it next to the
+    # deliverables left `<modality>.int8.pre.onnx` files that a packaging glob would
+    # pick up as INT8 artifacts.
+    with tempfile.TemporaryDirectory() as tmp:
+        src = in_path
+        try:
+            from onnxruntime.quantization.shape_inference import quant_pre_process
 
-        pre = out_path.with_suffix(".pre.onnx")
-        quant_pre_process(str(in_path), str(pre), skip_symbolic_shape=True)
-        src = pre
-    except Exception:
-        pass  # fall back to quantizing the raw graph
-    quantize_dynamic(str(src), str(out_path), weight_type=QuantType.QInt8)
+            pre = Path(tmp) / f"{out_path.stem}.pre.onnx"
+            quant_pre_process(str(in_path), str(pre), skip_symbolic_shape=True)
+            src = pre
+        except Exception:
+            pass  # fall back to quantizing the raw graph
+        quantize_dynamic(str(src), str(out_path), weight_type=QuantType.QInt8)
     return out_path
 
 
@@ -186,19 +194,40 @@ def parity_check_multihead(
     return res
 
 
+def sha256_file(path: str | Path, chunk_size: int = 1 << 20) -> str:
+    """SHA-256 a file in streaming chunks, returning lowercase hex.
+
+    Mirrors ``app.biosqa.model.model_card.sha256_file`` — the app recomputes this digest at load
+    time and refuses the session on a mismatch, so producer and consumer must agree byte for byte.
+    Chunked because the .onnx artifacts are megabytes.
+    """
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def write_model_card(
     path: str | Path, *, modality: str, length: int, fs_hz: float,
     class_order, out_names, binary_class_order=("BAD", "OK"),
     artifact_class_order=None, artifact_threshold: float = 0.5,
     training_data_hash: str = "", model_version: str = "v2", normalization: dict | None = None,
-    calibration: dict | None = None, ood: dict | None = None,
+    calibration: dict | None = None, ood: dict | None = None, onnx_path: str | Path | None = None,
 ) -> dict:
     """Write the app v2 multi-head ``model_card.json`` (Plan 2 §11 handshake).
 
     Normalization defaults to ``{"method": "none"}`` because per-window instance
     z-score is baked into the exported graph (:class:`MultiHeadExport`).
     ``calibration`` records the baked-in per-head temperatures + ECE (provenance);
-    ``ood`` records the host-side conformal abstention threshold (metrology gate)."""
+    ``ood`` records the host-side conformal abstention threshold (metrology gate).
+
+    ``onnx_path`` pins the card to a specific graph via ``onnx_sha256``. Pass the FINAL
+    artifact — the app hashes the file it is about to open and refuses on a mismatch, so a
+    digest taken before a later rewrite is worse than none. ``model_version`` alone is
+    free text and cannot separate two same-shape graphs: ``app/dist/.../eeg.onnx`` is a v4
+    model of the identical byte size (2,298,439) and identical L_m/head contract as the
+    shipped v5, so every structural check passes and only the digest differs."""
     import json
 
     heads = [{"name": "grade", "output_name": "q_logits", "kind": "ordinal",
@@ -217,6 +246,8 @@ def write_model_card(
         "training_data_hash": training_data_hash, "model_version": model_version,
         "heads": heads,
     }
+    if onnx_path is not None:
+        card["onnx_sha256"] = sha256_file(onnx_path)
     if calibration is not None:
         calibration = dict(calibration)
         calibration.setdefault("location", "onnx_graph")
@@ -245,14 +276,23 @@ def export_and_verify_multihead(
         try:
             q8 = quantize_dynamic_onnx(onnx_path, out_dir / f"{modality}.int8.onnx")
             verdict["int8_onnx"] = str(q8)
+            # Never report an INT8 artifact we haven't measured (the single-head gate
+            # already does this). `passes_parity` stays the FP32 verdict — FP32 is the
+            # source of truth and INT8 drift is expected — but the INT8 result is now
+            # explicit instead of absent.
+            verdict["int8_parity"] = parity_check_multihead(
+                model, q8, modality, length, c_in=c_in, temperature=temperature)
+            verdict["passes_int8_parity"] = verdict["int8_parity"]["passes"]
             verdict["int8_latency_ms"] = cpu_latency_ms(q8, length, c_in=c_in)
         except Exception as e:
             verdict["int8_error"] = repr(e)
+    # Card last, and pinned to onnx_path: quantization writes a SEPARATE {modality}.int8.onnx,
+    # so the FP32 graph the card describes is final here and the digest cannot go stale.
     verdict["model_card"] = write_model_card(
         out_dir / f"{modality}.model_card.json", modality=modality, length=length, fs_hz=fs_hz,
         class_order=class_order, out_names=out_names, artifact_class_order=artifact_class_order,
         training_data_hash=training_data_hash, model_version=model_version,
-        calibration=calibration, ood=ood)
+        calibration=calibration, ood=ood, onnx_path=onnx_path)
     verdict["passes_parity"] = verdict["parity"]["passes"]
     return verdict
 

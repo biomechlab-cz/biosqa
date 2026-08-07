@@ -2,13 +2,18 @@
 (:class:`workers.qt_threads.InferenceTask` in memory, :func:`inference.streaming.stream_infer`
 out-of-core) turn ONNX probabilities into the numbers the user sees.
 
-It exists because the two paths had drifted: the in-memory path fail-safed a non-finite softmax and
-temperature-scaled the grade before deriving confidence/uncertainty/conformal, while the streamed
-path read them straight off the RAW softmax. Same signal, different exported numbers, decided only by
-whether the record tripped ``streaming.LARGE_RECORD_SAMPLES`` — and the RAW ones are the
-mis-calibrated ones (every shipped card reports grade ECE ~0.26 raw vs ~0.07 scaled). Calibration is
-a property of the MODEL, not of how much RAM the record happened to need, so it lives here and both
-paths call it.
+It exists because the two paths had drifted: the in-memory path fail-safed a non-finite softmax before
+deriving confidence/uncertainty/conformal, while the streamed path read them straight off the raw
+output. Same signal, different exported numbers, decided only by whether the record tripped
+``streaming.LARGE_RECORD_SAMPLES``. Sanitation is a property of the MODEL's output, not of how much RAM
+the record happened to need, so it lives here and both paths call it.
+
+Temperature is NOT applied here, and must not be applied anywhere host-side: every shipped graph BAKES
+its grade temperature (the final grade path is ``Log -> Div`` by the constant the card's
+``calibration.temperatures`` records, ``location: onnx_graph``), so the softmax onnxruntime returns is
+already the calibrated one the ECE and the conformal threshold were measured on. The card's
+temperatures DOCUMENT those constants; re-applying one would scale twice (6.25x logit sharpening on
+ECG, whose T is 0.4).
 
 Pure numpy (no Qt / no onnxruntime) so it is directly unit-testable.
 """
@@ -48,10 +53,11 @@ def sanitize_probs(probs):
 def calibrate_grade_probs(q_probs, card):
     """``(calibrated_probs, non_finite_mask)`` for the ordinal grade head.
 
-    Sanitize (above), then temperature-scale ONCE by the card's ``grade_temperature`` so every
-    user-facing UQ surface — confidence, entropy-uncertainty, APS prediction set — is derived from
-    the SAME calibrated distribution the conformal threshold was fit on. Monotonic, so the tiers
-    (argmax) are unchanged; a uniform (ungradeable) row stays uniform."""
+    Sanitize (above) — and nothing else: the graph already applied the card's ``grade_temperature``,
+    so what comes out of onnxruntime IS the calibrated distribution the conformal threshold was fit
+    on, and every user-facing UQ surface (confidence, entropy-uncertainty, APS prediction set) is
+    read off it. ``card`` stays in the signature because it is the calibration authority for this
+    head; it is deliberately unused. Do not re-scale here."""
     del card
     return sanitize_probs(q_probs)
 

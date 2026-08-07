@@ -13,6 +13,32 @@
   },
   "training_data_hash": "ppg-combined-fusion-store_ppg4_tmb",
   "model_version": "v4-4cohort-dalia-ordlogit",
+  "onnx_sha256": "4d1934fc42638c975499c296ec4578d355bba31c99002a1de3d618c2f31d1dc9",
+  "training_data_provenance": {
+    "store": "data/store_ppg4_tmb",
+    "cohorts": [
+      "BUT PPG",
+      "MIMIC-III-Ext-PPG",
+      "PPG-DaLiA",
+      "WESAD (PPG)"
+    ],
+    "digest": null,
+    "digest_note": "no snapshot manifest was recorded for store_ppg4_tmb, so no training-corpus digest is available; 'training_data_hash' above is a training-run nickname, NOT a hash",
+    "note": "cohort list re-verified against the store's segment index (all four cohorts are present in the train split the exporter loads). 'data.cohorts' below is the same four cohorts written as store dataset_keys; it previously listed only three (MIMIC-III-Ext-PPG was missing), which contradicted this block and the license block."
+  },
+  "license": {
+    "code_license": "MIT (app/LICENSE) \u2014 covers the app source, not these weights",
+    "weights_terms": "app/LICENSE-MODELS",
+    "redistribution": "restricted",
+    "commercial_use": "not supported by the upstream terms",
+    "source_terms": [
+      "MIMIC-III-Ext-PPG: PhysioNet credentialed access, signed data use agreement required",
+      "WESAD: research use; the dataset's terms exclude commercial use",
+      "BUT PPG: open access (PhysioNet)",
+      "PPG-DaLiA: open access (UCI ML Repository, CC BY)"
+    ],
+    "note": "provenance statement, not legal advice; verify each source's current terms before redistributing"
+  },
   "inputs": [
     "x_raw",
     "x_feat"
@@ -75,6 +101,8 @@
       "grade": 0.7,
       "usable": 5.556
     },
+    "fit_partition": "validation",
+    "evaluation_partition": "validation (store_ppg4_tmb) — the same split the temperature grid was minimized on; see held_out_ece for the held-out measurement",
     "grade_ece": [
       0.0859,
       0.052
@@ -82,15 +110,48 @@
     "usable_ece": [
       0.1509,
       0.0283
-    ]
+    ],
+    "partition_note": "the ECE pairs above are measured on the SAME validation split the temperature grid was minimized on, so the post-scaling number is an optimization minimum and optimistic. held_out_ece below is the held-out measurement: on 874 store_v8 test windows from 146 subjects this graph never saw, the grade head's post-scaling ECE is 0.1253 -- 2.41x the 0.052 above, the largest optimism gap of the four shipped cards. The usable head holds up (0.0465 vs 0.0283).",
+    "held_out_ece": {
+      "partition": "data/store_v8 test split, restricted to subjects absent from both the train and val partitions of data/store_ppg4_tmb (this graph's training store)",
+      "population_kind": "within_distribution: held-out SUBJECTS of all 4 cohorts the model trained on",
+      "n_windows": 874,
+      "n_subjects": 146,
+      "grade": [
+        0.2244,
+        0.1253
+      ],
+      "usable": [
+        0.0979,
+        0.0465
+      ],
+      "full_store_v8_test_partition": {
+        "n_windows": 2239,
+        "grade": [
+          0.1651,
+          0.1096
+        ],
+        "usable": [
+          0.1006,
+          0.054
+        ],
+        "why_not_the_headline": "61.0% of these windows belong to subjects that were in store_ppg4_tmb's train or val partition -- store.py::_subject_split re-shuffles each cohort's subject list per build, so a store_v8 test subject is not automatically unseen by this graph"
+      },
+      "pair_convention": "[pre_scaling, as_shipped], same as grade_ece/usable_ece above. The graph emits raw_logits/T, so the pre-scaling logits are recovered exactly as graph_logits * T -- no model was loaded and the baked-in temperature is unchanged.",
+      "estimator": "biosqa.xdomain.calibration.expected_calibration_error at its default n_bins=15 (equal-width top-1-confidence bins) -- the same function and bin count that produced grade_ece/usable_ece above, so the two columns are comparable",
+      "measured_by": "scripts/measure_heldout_calibration.py (onnxruntime forward over this .onnx; trains nothing, exports nothing)",
+      "source": "data/heldout_calibration.json"
+    }
   },
   "routing": "grade+usable <- raw trunk fused with host combined SQI+dynamics vector; grade = ordinal ordered-logit",
   "data": {
     "cohorts": [
       "but_ppg",
-      "wesad_ppg",
-      "ppg_dalia"
+      "mimic_ppg",
+      "ppg_dalia",
+      "wesad_ppg"
     ],
+    "cohorts_note": "store dataset_keys, verified against data/store_ppg4_tmb/segments.parquet (dataset_key values for modality=ppg). Same four cohorts as 'training_data_provenance.cohorts', which spells them with their display names.",
     "note": "added PPG-DaLiA (4th cohort) -> held-out WESAD cross-cohort LODO QWK ~0.40->~0.60; transferable-fold (WESAD/DaLiA) usable-AUROC ~0.80-0.85 (competitive with published pairwise DaLiA->WESAD band); grade ECE 0.052. Tumbling windows (50% overlap tested and found accuracy-neutral -> not used). DaLiA/WESAD share an ACC-motion label rule (caveat)."
   },
   "input_contract": {
@@ -175,7 +236,8 @@
       ]
     ],
     "d2_threshold": 63.7819,
-    "reference": "data/store_v6 n=6000"
+    "reference": "data/store_v6 n=6000",
+    "reference_note": "the reference manifold was fit on store_v6, which predates PPG-DaLiA, while this model trained on store_ppg4_tmb (which includes it) \u2014 the reference is therefore not this model's training corpus. Measured effect: 0/250 sampled DaLiA windows exceed d2_threshold (median D2 3.11 vs the 63.78 cutoff), lower than the in-reference BUT PPG cohort's 4.0% flag rate. Regenerated by scripts/fit_novelty_constants.py, which reproduces the shipped d2_threshold from store_v6 exactly (ecg 36.9192, eda 28.3858, ppg 63.7819)."
   },
   "feature_attribution": {
     "feature_fn": "combined_vector",

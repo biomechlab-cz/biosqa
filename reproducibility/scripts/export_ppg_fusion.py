@@ -1,3 +1,9 @@
+# ---------------------------------------------------------------------------
+# GENERATED FILE — do not edit here.
+# Verbatim copy of <monorepo>/scripts/<this name>, with one transform: the
+# sys.path bootstrap points at <root> (this package's layout puts biosqa/ at
+# the root) instead of <root>/src. Regenerate: python scripts/sync_from_src.py
+# ---------------------------------------------------------------------------
 """Export the PPG SQI-fusion deployable (campaign 2026-07-06).
 
 Banks the two promoted PPG levers in ONE model: (1) the host-precomputed SQI feature
@@ -25,11 +31,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from biosqa.data.harmonize import QUALITY_NAMES  # noqa: E402
 from biosqa.data.sqa_features import ppg_sqi_vector  # noqa: E402
 from biosqa.data.store import CANONICAL_FS, WINDOW_S, SegmentStore  # noqa: E402
+from biosqa.export.to_onnx import sha256_file  # noqa: E402
 from biosqa.models.fusion import FeatureFusionExport, FeatureFusionMultiHead  # noqa: E402
 from biosqa.train.losses import SORDLoss  # noqa: E402
 from biosqa.train.loop import _cosine_warmup  # noqa: E402
@@ -133,6 +140,10 @@ def main():
         "modality": "ppg", "L_m": L, "fs_hz": float(fs), "class_order": QN,
         "normalization": {"method": "none"},
         "training_data_hash": "ppg-sqi-fusion-store_v3", "model_version": "v3-sqi-fusion-ordlogit",
+        # Hashed AFTER the export+parity run above, so this pins the exact graph shipped.
+        # model_version is free text and cannot separate two same-shape graphs: app/dist's
+        # eeg.onnx is a v4 model of identical size and L_m/head contract to the shipped v5.
+        "onnx_sha256": sha256_file(onnx_path),
         "inputs": ["x_raw", "x_feat"],
         "feature_preprocessing": {"fn": "ppg_sqi_vector", "feat_names": names, "n_features": D,
                                   "note": "pure-numpy scale-invariant SQI vector (numpy.rfft band ratio + moments + "

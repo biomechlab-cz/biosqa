@@ -49,6 +49,22 @@ def _amp_entropy(x, bins=32):
     return float(-(p * np.log(p)).sum() / np.log(bins))   # normalized 0..1
 
 
+def _spectral_entropy(x, fs, lo=1.0, hi=45.0):
+    """Normalized Shannon entropy of the power spectrum over the EEG band — 0 = all power in one bin
+    (a pure rhythm), 1 = perfectly flat (white/broadband noise). This is the quantity the EEG panel's
+    row NAMES; it used to display :func:`_amp_entropy`, a 32-bin AMPLITUDE histogram that never touches
+    the spectrum (measured: a 10 Hz sine and white noise scored 0.94 vs 0.84, i.e. the wrong way round
+    for the "flat -> broadband noise" reading the row promises)."""
+    X = np.abs(np.fft.rfft(x - x.mean())) ** 2
+    f = np.fft.rfftfreq(len(x), 1.0 / fs)
+    X = X[(f >= lo) & (f <= min(hi, fs / 2.0 - 1.0))]
+    if X.size < 4:
+        return 0.0
+    p = X / (X.sum() + _EPS)
+    p = p[p > 0]
+    return float(-(p * np.log(p)).sum() / np.log(X.size))
+
+
 def _hf_fraction(x, fs, split_hz):
     power = np.abs(np.fft.rfft(x - x.mean())) ** 2
     f = np.fft.rfftfreq(len(x), 1.0 / fs)
@@ -130,11 +146,18 @@ def sqi_breakdown(window, fs: float, modality: str) -> list[dict]:
     if m == "eeg":
         hf = _hf_fraction(x, fs, 45.0)
         slope = _aperiodic_slope(x, fs); hjc = _hjorth_complexity(x); line = _line_noise_index(x, fs)
+        # Spectral entropy is INFORMATIONAL: it now measures what its name says (it used to display the
+        # amplitude-histogram entropy with an inverted bar), but on the reference EEG corpus it does not
+        # separate the grade classes — 300 store_v8 test windows per class give 0.71/0.68/0.63/0.72 for
+        # Q0..Q3, i.e. the cleanest class is not the most peaked. So it explains a window's spectrum
+        # without voting in :func:`sqi_consensus`, which fires the discordance banner; the panel's
+        # broadband evidence comes from the aperiodic slope and the HF fraction, which are directional.
+        spec_ent = _spectral_entropy(x, fs)
         return [
             {"name": "Aperiodic 1/f", "value": round(slope, 2), "hint": "steeper (−) = cleaner",
              "bar": _bar(slope, -2.0, 0.0), "desc": "Log-power vs log-freq slope — flat → broadband noise/EMG"},
-            {"name": "Spec. entropy", "value": round(ent, 2), "hint": "mid = cleaner",
-             "bar": _bar(abs(ent - 0.65), 0.0, 0.25), "desc": "Spectral flatness — flat → broadband noise"},
+            {"name": "Spec. entropy", "value": round(spec_ent, 2), "hint": "informational", "informational": True,
+             "bar": _bar(spec_ent, 0.45, 0.90), "desc": "Flatness of the 1-45 Hz power spectrum — flat → broadband noise"},
             {"name": "Hjorth comp.", "value": round(hjc, 2), "hint": "higher = noisier",
              "bar": _bar(hjc, 1.5, 6.0), "desc": "Departure from a pure rhythm — rises with spiky/broadband noise"},
             {"name": "Kurtosis", "value": round(ku, 1), "hint": "higher = noisier",

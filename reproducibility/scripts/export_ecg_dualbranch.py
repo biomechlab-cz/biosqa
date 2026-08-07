@@ -1,3 +1,9 @@
+# ---------------------------------------------------------------------------
+# GENERATED FILE — do not edit here.
+# Verbatim copy of <monorepo>/scripts/<this name>, with one transform: the
+# sys.path bootstrap points at <root> (this package's layout puts biosqa/ at
+# the root) instead of <root>/src. Regenerate: python scripts/sync_from_src.py
+# ---------------------------------------------------------------------------
 """Export the ECG DUAL-BRANCH spectral-fusion deployable (arch-search 2026-07-05).
 
 Raw branch -> ordinal SORD grade head (in-dist grade unregressed); raw+spectral fused
@@ -22,13 +28,14 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from biosqa.data.artifact_labels import to_multihot  # noqa: E402
 from biosqa.data.artifact_synth import synth_ecg_artifacts  # noqa: E402
 from biosqa.data.harmonize import ARTIFACT_TYPES, QUALITY_NAMES  # noqa: E402
 from biosqa.data.signal_channels import MODALITY_BANDS, spectral_band_channels  # noqa: E402
 from biosqa.data.store import CANONICAL_FS, WINDOW_S, SegmentStore  # noqa: E402
+from biosqa.export.to_onnx import sha256_file  # noqa: E402
 from biosqa.models.fusion import DualBranchExport, DualBranchMultiHead  # noqa: E402
 from biosqa.train.losses import SORDLoss  # noqa: E402
 from biosqa.train.loop import _cosine_warmup  # noqa: E402
@@ -47,6 +54,16 @@ def _inorm(X):
 def _derive_q(Y):
     n = Y[:, 1:].sum(1); q = np.full(len(Y), 3, np.int64); q[n == 1] = 1; q[n >= 2] = 0
     return q
+
+
+def type_pos_weight(T, mask):
+    """BCE ``pos_weight`` for the artifact-TYPE head: negatives/positives over the
+    TYPE-LABELLED rows only. The type loss is masked to ``mask``, so counting the
+    unlabelled rows as negatives inflates every entry (~2.1x here, 2.6x for 'clean')
+    and makes the head over-predict artifacts. Mirrors export_all_modalities.py:116.
+    NOTE: only takes effect on the next re-export of models/ecg_dualbranch.onnx."""
+    pos = T[mask].sum(0)
+    return np.clip(mask.sum() - pos, 1, None) / np.clip(pos, 1, None)
 
 
 def guarded_T(logits, labels):
@@ -76,6 +93,7 @@ def main():
     Xtr, ytr, _, _ = store.load_modality("ecg", "train"); ytr = ytr.astype(np.int64)
     Ttr, mtr = to_multihot(store.load_column("ecg", "artifact_type", split="train"))
     Xva, yva, _, _ = store.load_modality("ecg", "val"); yva = yva.astype(np.int64)
+    Xte, yte, _, _ = store.load_modality("ecg", "test"); yte = yte.astype(np.int64)
     # synthetic rare-type augmentation (grade-masked)
     carriers = Xtr[ytr == 3]
     if len(carriers) > args.n_synth:
@@ -90,8 +108,7 @@ def main():
 
     # precompute inormed raw + spectral channels
     Xr = _inorm(Xall); Xsp = _inorm(spectral_band_channels(Xall, fs, bands))
-    tpw = torch.tensor(np.clip(len(Xall) - Tall.sum(0), 1, None) / np.clip(Tall.sum(0), 1, None),
-                       dtype=torch.float32, device=DEVICE)
+    tpw = torch.tensor(type_pos_weight(Tall, tmask), dtype=torch.float32, device=DEVICE)
     model = DualBranchMultiHead(50, 50, nch, n_type=K, ordinal_grade=True).to(DEVICE)
     qcrit = SORDLoss(4, tau=2.0).to(DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
@@ -127,7 +144,24 @@ def main():
             ql.append(o["q"].float().cpu().numpy()); bl.append(o["binary"].float().cpu().numpy())
     ql = np.concatenate(ql); bl = np.concatenate(bl); yb = (yva >= 2).astype(int)
     Tq, q0, q1 = guarded_T(ql, yva); Tb, b0, b1 = guarded_T(bl, yb)
-    print(f"[ecg-dualbranch] grade ECE {q0:.3f}->{q1:.3f} (T={Tq:.2f}) | usable ECE {b0:.3f}->{b1:.3f} (T={Tb:.2f})", flush=True)
+    Xter = _inorm(Xte); Xtes = _inorm(spectral_band_channels(Xte, fs, bands))
+    with torch.no_grad():
+        qlt, blt = [], []
+        for i in range(0, len(Xte), 256):
+            o = model.forward_multitask(
+                torch.from_numpy(Xter[i:i+256].astype(np.float32)).to(DEVICE),
+                torch.from_numpy(Xtes[i:i+256].astype(np.float32)).to(DEVICE),
+            )
+            qlt.append(o["q"].float().cpu().numpy())
+            blt.append(o["binary"].float().cpu().numpy())
+    qlt, blt = np.concatenate(qlt), np.concatenate(blt)
+    ybt = (yte >= 2).astype(int)
+    qt0 = cal.expected_calibration_error(cal.apply_temperature(qlt, 1.0), yte)
+    qt1 = cal.expected_calibration_error(cal.apply_temperature(qlt, Tq), yte)
+    bt0 = cal.expected_calibration_error(cal.apply_temperature(blt, 1.0), ybt)
+    bt1 = cal.expected_calibration_error(cal.apply_temperature(blt, Tb), ybt)
+    print(f"[ecg-dualbranch] calibration-fit(val) grade {q0:.3f}->{q1:.3f}, usable {b0:.3f}->{b1:.3f}; "
+          f"independent-test grade {qt0:.3f}->{qt1:.3f}, usable {bt0:.3f}->{bt1:.3f}", flush=True)
 
     # export 2-input ONNX
     out_dir = Path(args.out); out_dir.mkdir(exist_ok=True)
@@ -161,6 +195,10 @@ def main():
         "modality": "ecg", "L_m": L, "fs_hz": float(fs), "class_order": QN,
         "normalization": {"method": "none"},  # per-window instance-norm baked into the graph
         "training_data_hash": "dualbranch-synthaug", "model_version": "v3-dualbranch-spectral",
+        # Hashed AFTER the export+parity run above, so this pins the exact graph shipped.
+        # model_version is free text and cannot separate two same-shape graphs: app/dist's
+        # eeg.onnx is a v4 model of identical size and L_m/head contract to the shipped v5.
+        "onnx_sha256": sha256_file(onnx_path),
         "inputs": ["x_raw", "x_spec"],
         "spectral_preprocessing": {"fn": "spectral_band_channels", "bands_hz": bands, "frame_s": FRAME_S,
                                    "hop_s": HOP_S, "n_channels": nch,
@@ -168,7 +206,13 @@ def main():
         "heads": [{"name": "grade", "output_name": "q_logits", "kind": "ordinal", "activation": "softmax", "class_order": QN},
                   {"name": "usable", "output_name": "bin_logits", "kind": "binary", "activation": "softmax", "class_order": ["unusable", "usable"]},
                   {"name": "artifact", "output_name": "type_logits", "kind": "multilabel", "activation": "sigmoid", "class_order": list(ARTIFACT_TYPES), "threshold": 0.5}],
-        "calibration": {"temperatures": {"grade": round(Tq, 4), "usable": round(Tb, 4)}, "grade_ece": [round(q0, 4), round(q1, 4)], "usable_ece": [round(b0, 4), round(b1, 4)]},
+        "calibration": {"location": "onnx_graph",
+                        "temperatures": {"grade": round(Tq, 4), "usable": round(Tb, 4)},
+                        "fit_partition": "validation", "evaluation_partition": "test",
+                        "grade_ece": [round(qt0, 4), round(qt1, 4)],
+                        "usable_ece": [round(bt0, 4), round(bt1, 4)],
+                        "optimization_ece": {"grade": [round(q0, 4), round(q1, 4)],
+                                             "usable": [round(b0, 4), round(b1, 4)]}},
         "routing": "grade<-raw branch; usable+type<-raw+spectral fused",
     }
     (out_dir / "ecg_dualbranch.model_card.json").write_text(json.dumps(card, indent=2))

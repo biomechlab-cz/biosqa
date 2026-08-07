@@ -55,6 +55,46 @@ Item {
         function onLaneLayoutChanged() { root._rebuildLanes() }
     }
 
+    // ---- is the GRADED channel actually on screen? --------------------------------------------
+    // Every quality band, and the hover amplitude (signalView.valueAt reads the graded channel's
+    // cache, never the lane under the cursor), describes ONE channel of the recording. Hiding that
+    // channel used to leave the tier-coloured bands painted full height over a completely ungraded
+    // trace, and the tooltip quoting the hidden channel's amplitude as if it belonged to the visible
+    // one — the same misleading-attribution class the export provenance already had to fix. The bands
+    // are not deleted (the grades are still real); they are DE-COLOURED and captioned with whose they
+    // are, and the tooltip names the channel its number comes from.
+    property string analyzedChannel: ""
+    readonly property bool analyzedDrawn: analyzedChannel === ""
+                                          || (signalView.laneChannels || []).indexOf(analyzedChannel) >= 0
+    //: appended to the tooltip amplitude whenever "this is the trace under the cursor" is not obvious
+    readonly property string valueSuffix:
+        analyzedChannel === "" ? ""
+        : (!analyzedDrawn ? (" · " + analyzedChannel + " (hidden)")
+                          : (signalView.laneCount > 1 ? (" · " + analyzedChannel) : ""))
+
+    // Non-visual mirror of the channel list: the ANALYZED flag is exposed nowhere else, and a model
+    // index is not reachable from QML.
+    Instantiator {
+        id: chanMirror
+        model: channels
+        delegate: QtObject {
+            required property string name
+            required property bool analyzed
+            onAnalyzedChanged: root._syncAnalyzedChannel()
+            onNameChanged: root._syncAnalyzedChannel()
+            Component.onCompleted: root._syncAnalyzedChannel()
+        }
+        onCountChanged: root._syncAnalyzedChannel()
+    }
+    function _syncAnalyzedChannel() {
+        var found = ""
+        for (var i = 0; i < chanMirror.count; i++) {
+            var o = chanMirror.objectAt(i)
+            if (o && o.analyzed) { found = o.name; break }
+        }
+        root.analyzedChannel = found          // "" once a record is closed / nothing was graded
+    }
+
     function _fmtClock(sec) {
         sec = Math.max(0, Math.round(sec))
         var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60
@@ -131,6 +171,10 @@ Item {
         readonly property real vs: root.viewStart
         readonly property real ve: root.viewEnd
         readonly property bool cbPal: Theme.useColorBlindPalette
+        //: the graded channel is not among the drawn lanes -> the tier COLOURS would be attributing a
+        //: grade to a trace that was never graded. Paint the spans in neutral grey instead.
+        readonly property bool muted: !root.analyzedDrawn
+        onMutedChanged: requestPaint()
         onBandsChanged: requestPaint()
         onTotalDurChanged: requestPaint()
         onVsChanged: requestPaint()
@@ -158,11 +202,37 @@ Item {
                 // Everywhere else that needs the components binds it to a `property color`, which QML
                 // converts for you -- but this is raw Canvas JS, so Qt.rgba(undefined,...) silently
                 // produced an invalid brush and the bands painted NOTHING. Convert explicitly.
-                var c = Qt.color(Theme.tierInfo(bs[i].tier).color)
+                var c = bandsLayer.muted ? Qt.color("#8A8F98")
+                                         : Qt.color(Theme.tierInfo(bs[i].tier).color)
                 var xa = root.xForSec(s0)
-                ctx.fillStyle = Qt.rgba(c.r, c.g, c.b, 0.15)
+                ctx.fillStyle = Qt.rgba(c.r, c.g, c.b, bandsLayer.muted ? 0.07 : 0.15)
                 ctx.fillRect(xa, 0, Math.max(1, root.xForSec(s1) - xa), height)
             }
+        }
+    }
+
+    // The caption that goes with the de-coloured bands: WHOSE grades are still drawn here. Without it
+    // a grey band over an ungraded trace is merely mysterious instead of merely wrong.
+    Rectangle {
+        objectName: "bandsOrphanedNotice"
+        visible: !root.analyzedDrawn && root.analyzedChannel !== ""
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: 4
+        width: notice.implicitWidth + 14
+        height: notice.implicitHeight + 8
+        radius: 3
+        color: Qt.rgba(0, 0, 0, 0.55)
+        border.color: Qt.rgba(1, 1, 1, 0.12)
+        border.width: 1
+        z: 40
+        Text {
+            id: notice
+            anchors.centerIn: parent
+            text: "Quality bands grade " + root.analyzedChannel + " — that channel is hidden"
+            color: Theme.textSecondary
+            font.family: Theme.fontMono
+            font.pixelSize: 10
         }
     }
 
@@ -249,7 +319,9 @@ Item {
             var seg = segments.segmentAt(sec)
             tip.timeText = root._fmtClock(sec)
             tip.windowText = sec.toFixed(1) + " s"
-            tip.valueText = signalView.valueAt(sec).toFixed(2) + " a.u."
+            // `valueSuffix` names the channel this number came from whenever that is not obvious:
+            // valueAt() reads the GRADED channel, which may be one of several lanes — or hidden.
+            tip.valueText = signalView.valueAt(sec).toFixed(2) + " a.u." + root.valueSuffix
             // The else-branch is load-bearing: without it the tooltip kept the LAST segment's
             // tier/confidence and showed it over ungraded time (pre-inference, or a gap).
             if (seg) {

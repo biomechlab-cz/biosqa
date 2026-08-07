@@ -143,7 +143,7 @@ It is torch-based research code, kept deliberately separate from the torch-free 
 The core pipeline — **open a WFDB/EDF recording → detect modality → run the quality model →
 overlay segments → inspect → export**, plus the synthetic-signal demo — works end-to-end, and
 the framework-agnostic pieces (loaders, decimation, segmenters, model-card validation, the
-runtime guards, and settings) are unit-tested (`pytest`, 128 tests, run in CI on Linux + Windows).
+runtime guards, and settings) are unit-tested (`pytest`, 400+ tests, run in CI on Linux + Windows).
 Some formats beyond WFDB/EDF (e.g. Zarr/Parquet ingestion) are still in progress. The standalone
 frozen build (`pyinstaller build/biosqa.spec`) is validated on **Windows** — it launches and runs;
 the macOS/Linux release jobs and a bare-machine (no-Python) test are not yet proven. Contributions
@@ -153,15 +153,15 @@ and issues welcome.
 
 The biosignal signal-quality models in this project were trained on the public datasets below, grouped by modality. Each entry notes its role (native quality labels, quality *derived* from adjacent annotations, or a calibrated clean/noise source). All PhysioNet datasets additionally fall under the umbrella PhysioNet citation: Goldberger et al. (2000), *Circulation* 101(23):e215–e220, https://doi.org/10.1161/01.CIR.101.23.e215.
 
+This list is the **ingested** corpus — every entry has a loader and appears in a built training store. It is not a per-model list: which cohorts each shipped model actually trained on, and what access terms those carry, is recorded per model in [`LICENSE-MODELS`](LICENSE-MODELS) and in the `training_data_provenance` block of its model card.
+
 ### ECG
 - **PhysioNet/CinC Challenge 2011** — native binary acceptable/unacceptable labels per 10-s 12-lead record; Silva, Moody & Celi (2011), *Computing in Cardiology* 38:273–276. PhysioNet: `challenge-2011`, https://physionet.org/content/challenge-2011/.
 - **BUT QDB (Brno University of Technology ECG Quality Database)** — native 3-class (good/usable/unusable) expert quality annotations; Nemcova et al. (2020), PhysioNet. https://doi.org/10.13026/kah4-0w24.
 - **European ST-T Database (EDB)** — native per-channel 3-class quality codes via NOISE annotations; Taddei et al. (1992), *European Heart Journal* 13(9):1164–1172. PhysioNet: `edb`.
-- **Long-Term ST Database (LTST DB)** — derived quality (noisy/unreadable ST-episode + beat-artifact flags); Jager et al. (2003), *Med. & Biol. Eng. & Comput.* 41(2):172–183, https://doi.org/10.1007/BF02344885. PhysioNet: `ltstdb`.
 - **MIT-BIH Malignant Ventricular Ectopy Database (VFDB)** — derived quality (NOISE episode code) / secondary clean source; Greenwald (1986), M.S. thesis, MIT. PhysioNet: `vfdb`.
 - **MIT-BIH Noise Stress Test Database (NSTDB)** — calibrated-SNR noise source; Moody, Muldrow & Mark (1984), *Computers in Cardiology* 11:381–384. PhysioNet: `nstdb`.
 - **MIT-BIH Supraventricular Arrhythmia Database (SVDB)** — derived quality / clean source; Greenwald (1990), Ph.D. thesis, Harvard–MIT HST. PhysioNet: `svdb`, https://doi.org/10.13026/C2V30W.
-- **Motion Artifact Contaminated ECG Database (macecgdb)** — derived quality from activity-condition proxy; PhysioNet: `macecgdb`, https://physionet.org/content/macecgdb/.
 - **PTB-XL** — derived quality from per-record noise/artifact flags; also a clean-signal source; Wagner et al. (2020), *Scientific Data* 7:154, https://doi.org/10.1038/s41597-020-0495-6. PhysioNet: `ptb-xl`.
 
 ### EEG
@@ -173,18 +173,29 @@ The biosignal signal-quality models in this project were trained on the public d
 
 ### PPG
 - **BUT PPG (BUT Smartphone PPG Database)** — native binary good/poor quality per 10-s record; Nemcova et al. (2021), *BioMed Research International* 2021:3453007, https://doi.org/10.1155/2021/3453007. PhysioNet: `butppg`.
-- **WESAD (wrist PPG)** — derived quality from synchronized wrist-accelerometer motion; Schmidt et al. (2018), *ICMI '18*, https://doi.org/10.1145/3242969.3242985.
+- **PPG-DaLiA** — derived quality from synchronized wrist-accelerometer motion; Reiss et al. (2019), *Sensors* 19(14):3079, https://doi.org/10.3390/s19143079. UCI ML Repository: `PPG-DaLiA`.
+- **WESAD (wrist PPG)** — derived quality from synchronized wrist-accelerometer motion; Schmidt et al. (2018), *ICMI '18*, https://doi.org/10.1145/3242969.3242985 (**research use; the dataset's terms exclude commercial use**).
+- **MIMIC-III-Ext-PPG** — native per-10-s SQI codes; a MIMIC-III derivative on PhysioNet (**credentialed access / signed data use agreement required**).
 
 ### EDA
 - **EDA-Artifact-Detection (UTD + AWW)** — native binary artifact labels per 5-s window (3-expert vote); Zhang, Haghdan & Xu (2017), *ISWC '17*, arXiv:1707.08287. Source data: UT Dallas stress set (Birjandtalab et al., 2016, *IEEE SiPS*) and Alan Walks Wales (https://alanwalks.wales/data/).
 - **EDABE** — native per-sample binary expert artifact mask; Llanes-Jurado et al. (2023), *Expert Systems with Applications* 230:120581, https://doi.org/10.1016/j.eswa.2023.120581. Dataset: Zenodo, https://doi.org/10.5281/zenodo.7248134.
-- **WESAD (wrist EDA)** — derived quality from wrist-accelerometer motion; Schmidt et al. (2018), *ICMI '18*, https://doi.org/10.1145/3242969.3242985.
+- **WESAD (wrist EDA)** — derived quality from wrist-accelerometer motion; Schmidt et al. (2018), *ICMI '18*, https://doi.org/10.1145/3242969.3242985 (**research use; the dataset's terms exclude commercial use**).
+- **PPG-DaLiA (EDA)** — derived quality from wrist-accelerometer motion; Reiss et al. (2019), *Sensors* 19(14):3079, https://doi.org/10.3390/s19143079. UCI ML Repository: `PPG-DaLiA`.
 
 ## Acknowledgements & licenses
 
-BioSQA Studio is released under the **MIT License** (see [`LICENSE`](LICENSE)).
+The **app source code** is released under the **MIT License** (see [`LICENSE`](LICENSE)).
 
-It builds on: **Qt / PySide6** (LGPLv3), **ONNX Runtime** (MIT), **wfdb** (MIT) and **MNE**
-(BSD-3) for reading recordings, **NumPy / SciPy**, **Zarr**, **PyArrow / Polars**, and
-**tsdownsample**. Bundled UI fonts retain their own licenses. Each dependency is governed by
-its respective license.
+**The MIT license does not cover the model weights.** The four `.onnx` files in `models/` are
+derived from the datasets listed above, and some of those carry access or use restrictions that
+the weights inherit — **TUAR** (signed Temple data use agreement), **MIMIC-III-Ext-PPG**
+(PhysioNet credentialed access), **WESAD** (research use, no commercial use). Per-model
+provenance and the inherited terms are in [`LICENSE-MODELS`](LICENSE-MODELS), and machine-readably
+in the `license` block of each `models/<modality>.model_card.json`. That file is a provenance
+statement, not legal advice: check each source's current terms before redistributing the weights
+or using them commercially. No dataset is redistributed with the app.
+
+The app builds on: **Qt / PySide6** (LGPLv3), **ONNX Runtime** (MIT), **wfdb** (MIT) and **MNE**
+(BSD-3) for reading recordings, **NumPy / SciPy**, **Zarr**, and **PyArrow**. Bundled UI fonts
+retain their own licenses. Each dependency is governed by its respective license.

@@ -44,12 +44,32 @@ reproducibility/
     data/          windows · sqa_features · sqi · augment · synthetic · feature banks (ecg_sqi, nonlinear, …)
     utils/         config · seed · paths
   configs/         base.yaml + experiment/*.yaml
-  scripts/         run_experiment.py (entrypoint) · export_*.py
-  requirements.txt
+  scripts/         run_experiment.py (entrypoint) · export_*.py · sync_from_src.py
+  pyproject.toml · requirements.txt
 ```
 
 The **eval harness is frozen**: every run calls `eval.protocols.evaluate(...)`; metrics are never
 re-implemented in experiment code, so historical comparisons stay valid.
+
+### `biosqa/` and `scripts/` are GENERATED — do not edit them here
+
+Both trees are mechanically derived from the research monorepo by
+**`scripts/sync_from_src.py`** (`--check` reports drift and exits 1; no argument rewrites):
+
+| tree | source | transform |
+|---|---|---|
+| `biosqa/**.py` | `src/biosqa/<same path>` | none — **verbatim byte copy** |
+| `scripts/*.py` | `<monorepo>/scripts/<same name>` | one line: the `sys.path` bootstrap points at `<root>` instead of `<root>/src`, plus a GENERATED banner |
+
+Deliberate exceptions: `biosqa/utils/paths.py` (its repo root must resolve to *this* folder) and
+`scripts/sync_from_src.py` itself (reproducibility-only). To change anything else, edit the
+monorepo copy and re-run the sync — an edit made here is silently reverted by the next sync.
+
+Hand-copying is what let this package rot twice: first `eval/protocols.py` fell behind and lost the
+cluster-bootstrap CI helpers, then nine modules **and both export scripts** shipped pre-fix code
+(an inflated artifact-type `pos_weight`, an un-masked `class_weights`) after the engine had already
+been fixed — i.e. the package reproduced the *buggy* engine. `app/tests/test_reproducibility_sync.py`
+now fails the app test suite whenever the snapshot drifts, so this cannot rot silently again.
 
 ---
 
@@ -61,12 +81,22 @@ re-implemented in experiment code, so historical comparisons stay valid.
 ```
 python -m venv .venv && . .venv/bin/activate      # (Windows: .venv\Scripts\activate)
 pip install -r requirements.txt
+pip install -e .                                  # puts `biosqa` on the path
 # GPU (Blackwell/sm_120): install torch from the CUDA 12.8 index instead of the default wheel:
 #   pip install torch --index-url https://download.pytorch.org/whl/cu128
 ```
 
-Reproducibility knobs: `utils.seed.seed_everything()`, a config hash + data-manifest hash logged per run,
-and every run tracked to **MLflow** (`./mlruns`, SQLite backend).
+`pip install -e .` is what makes `import biosqa` work; `requirements.txt` only installs the
+dependencies. (The scripts also insert this folder on `sys.path` themselves, so they run from a
+bare checkout too.)
+
+Reproducibility knobs: `utils.seed.seed_everything()` and a **config hash** logged per run.
+`scripts/run_experiment.py` also logs to **MLflow** (`./mlruns`, SQLite backend) when it is
+installed. Two honest caveats about the wider research engine this folder is drawn from: no
+*data-manifest* hash is computed per run (corpus-level SHA-256 digests exist per built store, in
+that store's `snapshot_manifest.json`, not per run), and most published campaign results come from
+standalone experiment scripts that do **not** go through this entrypoint and are not in MLflow —
+they are recorded as JSON result files plus a running research log.
 
 ---
 
@@ -81,12 +111,21 @@ python scripts/run_experiment.py --experiment dummy_smoke
 # a real run — requires the data-acquisition layer (see Data) plus a built store:
 python scripts/run_experiment.py --experiment ecg_store --set train.lr=1e-4 seed=1
 
-# export a trained model to ONNX + model card:
+# export a trained model to ONNX + model card — REFERENCE CODE, see the caveat below:
 python scripts/export_all_modalities.py          # or the per-modality export_*.py
 ```
 
-The `dummy_smoke` run is self-contained (`data/synthetic.py`); the `store` / `cinc2011` data sources need
-the omitted loader layer (below).
+The `dummy_smoke` run is self-contained (`data/synthetic.py`) — its data source is imported lazily, so
+it runs against this package alone. The `store` / `cinc2011` sources need the omitted loader layer (below).
+
+> **The `export_*.py` scripts are reference code, not runnable as shipped.** They import
+> `biosqa.data.harmonize`, `biosqa.data.store` and `biosqa.xdomain` (calibration + conformal
+> abstention) at module level, and none of those are part of this subset — the first two are the
+> omitted data-acquisition layer, and `xdomain/` is outside the model+train+eval+export scope. They
+> are included because they are the exact, byte-synced recipe that produced the shipped
+> `<modality>.onnx` + `model_card.json` (architecture, loss weighting, temperature-scaling and
+> conformal-threshold procedure, card fields), which is what a reader needs to audit. To execute
+> them, take them from the full research monorepo.
 
 The training recipe (defaults in `configs/base.yaml`): PatchTST `d_model=128`, depth 3, 8 heads; 30 epochs,
 AdamW `lr=1e-3` / `weight_decay=1e-2`, 5 % warmup, batch 256, AMP, early-stop on macro-F1. Report
@@ -107,13 +146,19 @@ plus a `segments.parquet` of `modality, dataset, subject_id, label_harmonized, s
 > feature banks (`data/sqa_features.py`, `sqi.py`, `ecg_sqi.py`, `nonlinear_features.py`), augmentation,
 > and the synthetic data source that drives `dummy_smoke`. To reproduce on real data, provide a store in
 > the schema above (or wire your own loaders) and point `data.store_dir` at it.
+>
+> **Three of those modules are readable but not importable as shipped**, because they need the omitted
+> `data/harmonize.py` (the Q0–Q3 mapping table) at import time: `data/windows.py`,
+> `data/artifact_labels.py` and `data/artifact_synth.py`. The feature banks, augmentation and
+> `data/synthetic.py` — everything `dummy_smoke` and the SQI/fusion inputs touch — import cleanly.
+> `app/tests/test_reproducibility_sync.py` pins this list, so it cannot grow unnoticed.
 
 **Datasets (each retains its own license/terms — acquire from the source and respect its access terms):**
 
 | Modality | Datasets | Access |
 |---|---|---|
 | ECG | BUT QDB · European ST-T · MIT-BIH VFDB/SVDB/NSTDB · PTB-XL · PhysioNet/CinC-2011 | open (CC-BY / ODC-BY) |
-| PPG | BUT PPG · WESAD (wrist) · PPG-DaLiA | open / research-use |
+| PPG | BUT PPG · PPG-DaLiA · WESAD (wrist) · MIMIC-III-Ext-PPG | open / research-use; **WESAD is non-commercial**, **MIMIC-III-Ext-PPG needs PhysioNet credentialed access** |
 | EEG | Motion-Artifact fNIRS+EEG · PhysioMotion (ds006386) · Phantom-EEG (ds004784) · Mind-in-Motion · TUAR (TUH) | mostly CC0 / ODC-BY; **TUAR requires a Temple DUA** |
 | EDA | EDABE · EDA-Artifact-Detection (UTD + AWW) · WESAD (wrist) | open / research-use |
 
@@ -126,5 +171,10 @@ plus a `segments.parquet` of `modality, dataset, subject_id, label_harmonized, s
 
 ## License
 
-Code: MIT (see the project root). Datasets and any trained weights retain the terms of their respective
-data sources — see the access column above before redistributing a model.
+Code: MIT (see the project root). **Datasets and trained weights are not covered by that grant** —
+they retain the terms of their respective data sources. Two of those terms are restrictive and apply
+to the weights shipped with the app: **WESAD** is research-use only (no commercial use, PPG + EDA),
+and **MIMIC-III-Ext-PPG** and **TUAR/TUH EEG** require credentialed access / a signed data use
+agreement (PPG and EEG respectively). Per-model provenance and inherited terms are in
+[`../LICENSE-MODELS`](../LICENSE-MODELS). This is a provenance statement, not legal advice: check
+each source's current terms before redistributing a model.

@@ -63,7 +63,13 @@ def math_factorial(k):
 
 
 def _higuchi_fd(x, kmax=10):
-    """Higuchi fractal dimension per row [N, L]."""
+    """Higuchi fractal dimension per row [N, L].
+
+    L_m(k) = (1/k) * sum|x(m+ik)-x(m+(i-1)k)| * (N-1) / (floor((N-m)/k) * k) — the
+    leading 1/k was missing, which shifted every value down by exactly 1.0 (white
+    noise read 0.995 instead of 1.995). Only two probe experiments consume this and
+    both standardize first, so the constant offset was invisible there.
+    """
     n, L = x.shape
     ks = np.arange(1, kmax + 1)
     lnL = np.empty((n, len(ks)))
@@ -74,7 +80,7 @@ def _higuchi_fd(x, kmax=10):
             if len(idx) < 2:
                 continue
             seg = x[:, idx]
-            length = np.abs(np.diff(seg, axis=1)).sum(1) * (L - 1) / (((len(idx) - 1)) * k)
+            length = np.abs(np.diff(seg, axis=1)).sum(1) * (L - 1) / ((len(idx) - 1) * k * k)
             lm += length
         lm /= k
         lnL[:, j] = np.log(lm + _EPS)

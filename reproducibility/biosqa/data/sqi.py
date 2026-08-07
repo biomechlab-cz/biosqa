@@ -33,10 +33,15 @@ def sqi_matrix(X: np.ndarray, fs: float, modality: str = "ecg") -> np.ndarray:
     kurt = stats.kurtosis(x, axis=1)
     skew = stats.skew(x, axis=1)
 
-    # band-power SNR proxy: in-band power / total power
+    # band-power SNR proxy: in-band power / total power.
+    # The per-row mean is removed first: the DC bin is EXCLUDED from the band mask
+    # (lo >= 0.01 Hz for every modality) but was included in `total`, so a window's
+    # baseline offset alone deflated snr_band (audit 2026-08: on store_v2/v3 ECG the
+    # DC bin carried 17 % of total power on average, p90 80 %, and snr_band
+    # correlated only r=0.75 with the mean-removed version).
     lo, hi = _BANDS.get(modality, (0.5, 40.0))
     freqs = np.fft.rfftfreq(L, d=1.0 / fs)
-    P = np.abs(np.fft.rfft(x, axis=1)) ** 2
+    P = np.abs(np.fft.rfft(x - x.mean(axis=1, keepdims=True), axis=1)) ** 2
     total = P.sum(axis=1) + 1e-12
     band = P[:, (freqs >= lo) & (freqs <= hi)].sum(axis=1)
     hf = P[:, freqs > hi].sum(axis=1)

@@ -255,7 +255,13 @@ class SignalViewController(QObject):
         """A non-primary lane's cache finished building off-thread — store it and draw the lane
         (unless it was toggled off, or a NEW recording opened while the read was in flight)."""
         self._pending_channels.discard(channel)
-        if getattr(self.sender(), "_gen", self._load_gen) != self._load_gen:
+        # FAIL CLOSED. ``clear()``/``set_recording*`` drop ``_cache_carriers`` on every open, so a
+        # superseded lane read's carrier is collected before its queued ``ready`` is delivered and
+        # ``sender()`` is None — the old ``getattr(self.sender(), "_gen", self._load_gen)`` then
+        # defaulted to the LIVE generation and the check passed, installing recording A's samples in
+        # recording B's same-named lane (["MLII","V5"], ["EEG Fpz-Cz","EEG Pz-Oz"], ...).
+        sender = self.sender()
+        if sender is None or getattr(sender, "_gen", None) != self._load_gen:
             return                                    # stale read from a superseded recording
         if channel not in self._lanes:
             return
@@ -411,12 +417,18 @@ class SignalViewController(QObject):
 
     @Slot(float, float, result="QVariant")
     def curveForRange(self, start_sec: float, end_sec: float):  # noqa: N802
-        """Decimated min/max envelope of the primary channel over [start, end] seconds, as
-        ``{x, ymin, ymax, lo, hi}`` lists — for the Segment Inspector's zoomed waveform and the segment-grid
-        minis. Prefers the in-memory full-resolution cache the trace already draws from: slicing it is a pure
-        numpy op, whereas a fresh ``read_window`` here is a SYNCHRONOUS disk read on the GUI thread (a
-        multi-minute span is a ~1e5–1e6-sample read *per card* — the segment grid called this once per
-        delegate). Falls back to a bounded disk read only until the cache is populated."""
+        """Decimated min/max envelope of the ANALYZED channel over [start, end] seconds, as
+        ``{x, ymin, ymax, lo, hi, channel}`` lists — for the Segment Inspector's zoomed waveform and the
+        segment-grid minis. Prefers the in-memory full-resolution cache the trace already draws from: slicing
+        it is a pure numpy op, whereas a fresh ``read_window`` here is a SYNCHRONOUS disk read on the GUI
+        thread (a multi-minute span is a ~1e5–1e6-sample read *per card* — the segment grid called this once
+        per delegate). Falls back to a bounded disk read only until the cache is populated.
+
+        ``channel`` names WHICH trace the envelope came from. Lane 0 is the analyzed channel (the
+        Coordinator orders ``_plot_channels`` analyzed-first), which is the one the grades describe — but on
+        a multi-channel recording it need not be the lane the user is looking at, and it can be hidden
+        entirely. Returning it lets the caller say so instead of presenting one channel's amplitudes as if
+        they were another's; ``WaveformChart`` already does this for the hover tooltip via ``valueSuffix``."""
         if not self._channels or self._fs <= 0:
             return None
         ch = self._channels[0]
@@ -454,7 +466,7 @@ class SignalViewController(QObject):
         if hi <= lo:
             hi = lo + 1.0
         return {"x": xm.tolist(), "ymin": ymin.tolist(), "ymax": ymax.tolist(),
-                "lo": lo, "hi": hi}
+                "lo": lo, "hi": hi, "channel": ch}
 
     @Slot(float, result=float)
     def valueAt(self, sec: float) -> float:  # noqa: N802

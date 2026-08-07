@@ -12,22 +12,31 @@ set whose provenance differs from live recordings, and the app decodes the set f
 (not per-window), so the app surfaces this as an *ambiguity* signal, NOT as a hard coverage percentage. A
 fresh split-conformal calibration on the deployed model + a documented reference set would restore the exact %.
 
-The card's ``grade_nonconformity_threshold`` was calibrated on TEMPERATURE-SCALED grade probabilities, so
-:func:`temperature_scale` must be applied to the app's raw softmax first (verified empirically: raw softmax
-makes almost every window ambiguous; T-scaled gives the intended confident/ambiguous split). Pure numpy.
+The card's ``grade_nonconformity_threshold`` was calibrated on TEMPERATURE-SCALED grade probabilities —
+and so is the softmax the app already holds: every shipped graph BAKES its grade temperature (final grade
+path ``Log -> Div`` by the card's constant, ``location: onnx_graph``). Feed :func:`aps_prediction_set` the
+probabilities onnxruntime returned, unscaled. Pure numpy.
 """
 from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["temperature_scale", "aps_prediction_set"]
+# temperature_scale is deliberately NOT exported: it is a correct utility with no correct caller in this
+# app, and calling it on the app's softmax would scale a second time (6.25x logit sharpening on ECG).
+__all__ = ["aps_prediction_set"]
 
 
 def temperature_scale(probs: np.ndarray, temperature: float | None) -> np.ndarray:
-    """Re-apply temperature ``T`` to a RAW softmax. Because ``log(softmax(z))`` = ``z`` up to a per-row
-    constant and softmax is shift-invariant, ``softmax(log(p)/T)`` == ``softmax(z/T)`` exactly — so this
-    recovers the temperature-scaled distribution from probabilities alone (the app has no raw logits).
-    ``T`` of ``None`` or ``1.0`` is a no-op."""
+    """Re-apply temperature ``T`` to an UNSCALED softmax. Because ``log(softmax(z))`` = ``z`` up to a
+    per-row constant and softmax is shift-invariant, ``softmax(log(p)/T)`` == ``softmax(z/T)`` exactly —
+    so this recovers the temperature-scaled distribution from probabilities alone (the app has no raw
+    logits). ``T`` of ``None`` or ``1.0`` is a no-op.
+
+    DO NOT call this on anything the app's ONNX session returned: those graphs already divide the grade
+    log-probabilities by the card's temperature, so a second application squares the sharpening (ECG's
+    T=0.4 becomes an effective 0.16) and collapses almost every APS prediction set to size 1, silently
+    deleting the ambiguity signal this module exists to provide. Kept only for offline analysis of an
+    un-baked graph."""
     p = np.asarray(probs, dtype=np.float64)
     if temperature is None or float(temperature) == 1.0:
         return p

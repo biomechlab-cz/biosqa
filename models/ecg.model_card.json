@@ -13,6 +13,31 @@
   },
   "training_data_hash": "dualbranch-synthaug",
   "model_version": "v3-dualbranch-spectral",
+  "onnx_sha256": "44d92b765d239beb587d6656e8d57537a33435c4a3ba0e423123efe78d3cd34e",
+  "training_data_provenance": {
+    "store": "data/store_v2",
+    "cohorts": [
+      "CinC-2011",
+      "BUT QDB",
+      "European ST-T Database",
+      "MIT-BIH Malignant Ventricular Ectopy Database",
+      "MIT-BIH NSTDB",
+      "MIT-BIH Supraventricular Arrhythmia Database",
+      "PTB-XL"
+    ],
+    "digest": null,
+    "digest_note": "no snapshot manifest was recorded for store_v2, so no training-corpus digest is available; 'training_data_hash' above is a training-run nickname, NOT a hash"
+  },
+  "license": {
+    "code_license": "MIT (app/LICENSE) — covers the app source, not these weights",
+    "weights_terms": "app/LICENSE-MODELS",
+    "redistribution": "attribution-required",
+    "commercial_use": "no restriction known from the training sources",
+    "source_terms": [
+      "all training cohorts are open-access PhysioNet datasets (ODC-BY / CC BY family)"
+    ],
+    "note": "provenance statement, not legal advice; verify each source's current terms before redistributing"
+  },
   "inputs": [
     "x_raw",
     "x_spec"
@@ -95,6 +120,8 @@
       "grade": 0.4,
       "usable": 3.5484
     },
+    "fit_partition": "validation",
+    "evaluation_partition": "validation (store_v2) — the same split the temperature grid was minimized on; see held_out_ece for the held-out measurement",
     "grade_ece": [
       0.2557,
       0.0654
@@ -102,7 +129,43 @@
     "usable_ece": [
       0.1298,
       0.0237
-    ]
+    ],
+    "partition_note": "the ECE pairs above are measured on the SAME validation split the temperature grid was minimized on, so the post-scaling number is an optimization minimum and optimistic (a held-out replication of the grade head on this graph gave 0.1343 -> 0.1121). held_out_ece below is that replication carried out in full: on 2315 store_v8 test windows from 459 subjects this graph never saw, the grade head's post-scaling ECE is 0.1116 -- 1.71x the 0.0654 above, and within 0.0005 of the 0.1121 quoted here.",
+    "held_out_ece": {
+      "partition": "data/store_v8 test split, restricted to subjects absent from both the train and val partitions of data/store_v2 (this graph's training store)",
+      "population_kind": "within_distribution: held-out SUBJECTS of all 7 cohorts the model trained on",
+      "n_windows": 2315,
+      "n_subjects": 459,
+      "grade": [
+        0.1517,
+        0.1116
+      ],
+      "usable": [
+        0.1159,
+        0.042
+      ],
+      "full_store_v8_test_partition": {
+        "n_windows": 3322,
+        "grade": [
+          0.1716,
+          0.0958
+        ],
+        "usable": [
+          0.101,
+          0.0377
+        ],
+        "why_not_the_headline": "30.3% of these windows belong to subjects that were in store_v2's train or val partition -- store.py::_subject_split re-shuffles each cohort's subject list per build, so a store_v8 test subject is not automatically unseen by a store_v2-trained graph"
+      },
+      "usable_under_app_x_spec_convention": [
+        0.1132,
+        0.0525
+      ],
+      "app_convention_note": "the numbers above build x_spec the way the exporter did (on the raw window); the app builds it on the per-window z-scored signal (onnx_runner.py:290-302), which the usable head reads. The grade head reads the raw branch alone and is bit-identical under both (max |dlogit| = 0.0, measured).",
+      "pair_convention": "[pre_scaling, as_shipped], same as grade_ece/usable_ece above. The graph emits raw_logits/T, so the pre-scaling logits are recovered exactly as graph_logits * T -- no model was loaded and the baked-in temperature is unchanged.",
+      "estimator": "biosqa.xdomain.calibration.expected_calibration_error at its default n_bins=15 (equal-width top-1-confidence bins) -- the same function and bin count that produced grade_ece/usable_ece above, so the two columns are comparable",
+      "measured_by": "scripts/measure_heldout_calibration.py (onnxruntime forward over this .onnx; trains nothing, exports nothing)",
+      "source": "data/heldout_calibration.json"
+    }
   },
   "routing": "grade<-raw branch; usable+type<-raw+spectral fused",
   "input_contract": {
@@ -113,7 +176,10 @@
   "ood": {
     "method": "conformal_aps",
     "grade_nonconformity_threshold": 0.9682,
-    "alpha": 0.1
+    "alpha": 0.1,
+    "fit_model": "v2-calibrated (the superseded single-input ECG graph)",
+    "measured_empirical_coverage": 0.885,
+    "coverage_note": "this tau was fit on the SUPERSEDED single-branch model and carried over unchanged. Measured on 1390 store_v2 ECG val windows through THIS graph it covers the true grade 88.5% of the time against a nominal 90% (alpha=0.1); a tau re-fit on this graph (0.9830) gives 90.1%. Re-fitting requires a model run, so the value is left as shipped and the measured coverage is stated here instead. The app deliberately surfaces the APS set as ambiguity and never prints a coverage percentage."
   },
   "novelty": {
     "method": "mahalanobis_sqi",

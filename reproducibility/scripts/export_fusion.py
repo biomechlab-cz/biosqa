@@ -1,3 +1,9 @@
+# ---------------------------------------------------------------------------
+# GENERATED FILE — do not edit here.
+# Verbatim copy of <monorepo>/scripts/<this name>, with one transform: the
+# sys.path bootstrap points at <root> (this package's layout puts biosqa/ at
+# the root) instead of <root>/src. Regenerate: python scripts/sync_from_src.py
+# ---------------------------------------------------------------------------
 """Generalized SQI-fusion export for any modality (campaign round-2, 2026-07-06).
 
 Banks the promoted COMBINED feature bank (per-modality SQI pack ++ round-2 advanced
@@ -23,11 +29,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from biosqa.data.harmonize import QUALITY_NAMES  # noqa: E402
 from biosqa.data.sqa_features import combined_vector  # noqa: E402
 from biosqa.data.store import CANONICAL_FS, WINDOW_S, SegmentStore  # noqa: E402
+from biosqa.export.to_onnx import sha256_file  # noqa: E402
 from biosqa.models.fusion import FeatureFusionExport, FeatureFusionMultiHead  # noqa: E402
 from biosqa.train.losses import SORDLoss  # noqa: E402
 from biosqa.train.loop import _cosine_warmup  # noqa: E402
@@ -69,10 +76,16 @@ def main():
 
     Xtr, ytr, _, _ = store.load_modality(mod, "train"); ytr = ytr.astype(np.int64)
     Xva, yva, _, _ = store.load_modality(mod, "val"); yva = yva.astype(np.int64)
-    Vtr, names = combined_vector(Xtr, fs, mod); Vva, _ = combined_vector(Xva, fs, mod)
+    Xte, yte, _, _ = store.load_modality(mod, "test"); yte = yte.astype(np.int64)
+    Vtr, names = combined_vector(Xtr, fs, mod)
+    Vva, _ = combined_vector(Xva, fs, mod)
+    Vte, _ = combined_vector(Xte, fs, mod)
     fmean, fstd = Vtr.mean(0), Vtr.std(0) + 1e-6
-    Vtr_s = ((Vtr - fmean) / fstd).astype(np.float32); Vva_s = ((Vva - fmean) / fstd).astype(np.float32)
+    Vtr_s = ((Vtr - fmean) / fstd).astype(np.float32)
+    Vva_s = ((Vva - fmean) / fstd).astype(np.float32)
+    Vte_s = ((Vte - fmean) / fstd).astype(np.float32)
     Xr = _inorm(Xtr.astype(np.float32)); Xvr = _inorm(Xva.astype(np.float32))
+    Xter = _inorm(Xte.astype(np.float32))
     D = Vtr.shape[1]
     print(f"[{mod}-fusion] train={len(Xr)} val={len(Xvr)} feat_dim={D}", flush=True)
 
@@ -104,7 +117,23 @@ def main():
             ql.append(o["q"].float().cpu().numpy()); bl.append(o["binary"].float().cpu().numpy())
     ql = np.concatenate(ql); bl = np.concatenate(bl); yb = (yva >= 2).astype(int)
     Tq, q0, q1 = guarded_T(ql, yva); Tb, b0, b1 = guarded_T(bl, yb)
-    print(f"[{mod}-fusion] grade ECE {q0:.3f}->{q1:.3f} (T={Tq:.2f}) | usable ECE {b0:.3f}->{b1:.3f} (T={Tb:.2f})", flush=True)
+    with torch.no_grad():
+        qlt, blt = [], []
+        for i in range(0, len(Xter), 256):
+            o = model.forward_multitask(
+                torch.from_numpy(Xter[i:i+256]).to(DEVICE),
+                torch.from_numpy(Vte_s[i:i+256]).to(DEVICE),
+            )
+            qlt.append(o["q"].float().cpu().numpy())
+            blt.append(o["binary"].float().cpu().numpy())
+    qlt, blt = np.concatenate(qlt), np.concatenate(blt)
+    ybt = (yte >= 2).astype(int)
+    qt0 = cal.expected_calibration_error(cal.apply_temperature(qlt, 1.0), yte)
+    qt1 = cal.expected_calibration_error(cal.apply_temperature(qlt, Tq), yte)
+    bt0 = cal.expected_calibration_error(cal.apply_temperature(blt, 1.0), ybt)
+    bt1 = cal.expected_calibration_error(cal.apply_temperature(blt, Tb), ybt)
+    print(f"[{mod}-fusion] calibration-fit(val) grade {q0:.3f}->{q1:.3f}, usable {b0:.3f}->{b1:.3f}; "
+          f"independent-test grade {qt0:.3f}->{qt1:.3f}, usable {bt0:.3f}->{bt1:.3f}", flush=True)
 
     out_dir = Path(args.out); out_dir.mkdir(exist_ok=True)
     onnx_path = out_dir / f"{mod}_fusion.onnx"
@@ -132,14 +161,23 @@ def main():
         "modality": mod, "L_m": L, "fs_hz": float(fs), "class_order": QN,
         "normalization": {"method": "none"},
         "training_data_hash": f"{mod}-combined-fusion-{Path(args.store).name}", "model_version": "v3-combined-fusion-ordlogit",
+        # Hashed AFTER the export+parity run above, so this pins the exact graph shipped.
+        # model_version is free text and cannot separate two same-shape graphs: app/dist's
+        # eeg.onnx is a v4 model of identical size and L_m/head contract to the shipped v5.
+        "onnx_sha256": sha256_file(onnx_path),
         "inputs": ["x_raw", "x_feat"],
         "feature_preprocessing": {"fn": "combined_vector", "modality": mod, "feat_names": names, "n_features": D,
                                   "note": "sqa_features.combined_vector (per-modality SQI pack ++ advanced dynamics/HOS); "
                                           "pure numpy (numpy.rfft only); graph z-scores x_raw and standardizes x_feat (baked)."},
         "heads": [{"name": "grade", "output_name": "q_logits", "kind": "ordinal", "activation": "softmax", "class_order": QN},
                   {"name": "usable", "output_name": "bin_logits", "kind": "binary", "activation": "softmax", "class_order": ["unusable", "usable"]}],
-        "calibration": {"temperatures": {"grade": round(Tq, 4), "usable": round(Tb, 4)},
-                        "grade_ece": [round(q0, 4), round(q1, 4)], "usable_ece": [round(b0, 4), round(b1, 4)]},
+        "calibration": {"location": "onnx_graph",
+                        "temperatures": {"grade": round(Tq, 4), "usable": round(Tb, 4)},
+                        "fit_partition": "validation", "evaluation_partition": "test",
+                        "grade_ece": [round(qt0, 4), round(qt1, 4)],
+                        "usable_ece": [round(bt0, 4), round(bt1, 4)],
+                        "optimization_ece": {"grade": [round(q0, 4), round(q1, 4)],
+                                             "usable": [round(b0, 4), round(b1, 4)]}},
         "routing": "grade+usable <- raw trunk fused with host combined SQI+dynamics vector; grade = ordinal ordered-logit",
     }
     (out_dir / f"{mod}_fusion.model_card.json").write_text(json.dumps(card, indent=2))

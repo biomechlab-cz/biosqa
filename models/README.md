@@ -87,3 +87,25 @@ This directory ships the four canonical FP32 models (`ecg`/`eda`/`eeg`/`ppg`,
 each an `.onnx` + `.model_card.json`) in version control; the app loads
 `<modality>.onnx` directly. Any additional `.onnx`/`.model_card.json` files
 are build/release artifacts.
+
+## Licensing of the shipped weights
+
+The repository's MIT `LICENSE` covers the **app source code**. It does **not**
+grant rights over the `.onnx` weights here: they are derived from third-party
+datasets, some of which are credentialed-access (MIMIC-III derivatives, TUAR)
+or research/non-commercial only (WESAD). Per-model provenance and the inherited
+terms are in [`../LICENSE-MODELS`](../LICENSE-MODELS), and machine-readably in
+each card:
+
+```json
+"training_data_provenance": { "store": "...", "cohorts": [...], "digest": "sha256:..." | null },
+"license": { "code_license": "...", "weights_terms": "app/LICENSE-MODELS",
+             "redistribution": "attribution-required" | "review-required" | "restricted",
+             "commercial_use": "...", "source_terms": [...] }
+```
+
+Both blocks are documentation only — `model_card.py` ignores unknown keys, so
+they carry no runtime behaviour. `training_data_hash` is a real SHA-256 digest
+only where the training store recorded a snapshot manifest (today: `eeg`); the
+other three carry a training-run nickname and say so in
+`training_data_provenance.digest_note`.

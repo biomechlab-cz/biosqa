@@ -34,6 +34,7 @@ Cards may also carry optional blocks that richer models rely on:
 - a **conformal (APS)** block — for prediction sets.
 - a **novelty (Mahalanobis)** reference — for out-of-distribution flagging.
 - a **feature-attribution** reference — used by fusion models.
+- **provenance & licence** — `training_data_provenance` (training store, cohorts, corpus digest where one was recorded) and `license` (the terms the weights inherit from their training data). Documentation only: the app ignores both. See [Contributing & license](/biosqa/docs/contributing/).
 
 The grade scale itself is covered on [Quality scale](/biosqa/docs/quality-scale/); the card's `class_order` is what binds a model's output heads to Q0..Q3.
 

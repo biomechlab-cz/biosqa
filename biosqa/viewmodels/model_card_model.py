@@ -55,7 +55,6 @@ class ModelCardModel(QAbstractListModel):
         card = load_model_card(path)
         self.beginResetModel()
         self._card = card
-        self.cardChanged.emit()
         self._rows = [
             ("modality", card.modality),
             ("L_m", str(card.l_m)),
@@ -66,3 +65,7 @@ class ModelCardModel(QAbstractListModel):
             ("model_version", card.model_version),
         ]
         self.endResetModel()
+        # AFTER the reset, matching Coordinator._blank_model_card: emitted mid-reset a cardChanged
+        # handler that queries the model would pair the NEW card's windowSec/modality with the
+        # PREVIOUS card's rows.
+        self.cardChanged.emit()

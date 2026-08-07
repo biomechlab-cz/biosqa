@@ -491,6 +491,39 @@ def test_analyzed_channel_is_the_one_plotted_and_exported(qapp, tmp_path):
     assert set(ann.chan) == {1}                                    # channel 1 (II), not 0 (RESP)
 
 
+def test_segment_mini_plots_name_the_channel_they_serve(qapp, tmp_path):
+    """The Segment Inspector's zoomed waveform and the Segment Grid minis both come from
+    ``curveForRange``, which always serves the ANALYZED channel — on ["RESP", "II"] that is II.
+    The main chart already de-colours its bands and suffixes its hover tooltip when the graded
+    channel is not the one on screen (or is hidden), but these two views served II's amplitudes
+    with no channel named anywhere, which is the same misleading-attribution defect one layer
+    down. The envelope now reports its own channel so the view can say whose numbers those are."""
+    rec = _write_ecg_2ch(tmp_path)
+    engine = build_engine()
+    ctl = engine._biosqa_controllers
+    recordings, signal_view, segments, coordinator = ctl[1], ctl[3], ctl[4], ctl[11]
+
+    recordings.open(rec, "ecg")
+    _drain(qapp, lambda: segments.totalCount > 0)
+
+    curve = signal_view.curveForRange(0.0, 10.0)
+    assert curve is not None
+    assert curve["channel"] == "II", "the envelope must name the graded channel, not lane 0 (RESP)"
+    assert curve["channel"] == coordinator._analyzed[1]      # same channel inference actually graded
+    assert curve["channel"] == signal_view._channels[0]      # ...which is the primary lane
+
+    # the fallback disk-read branch (cache not yet populated) must label identically
+    signal_view._caches = {}
+    assert signal_view.curveForRange(0.0, 10.0)["channel"] == "II"
+
+    # single-channel recording still reports its channel — QML decides when showing it adds
+    # information (WaveformChart's `valueSuffix` convention: only when >1 lane is drawn, or the
+    # graded lane is hidden), so the data layer must always carry it.
+    recordings.open(_write_ecg(tmp_path, name="solo"), "ecg")
+    _drain(qapp, lambda: segments.totalCount > 0)
+    assert signal_view.curveForRange(0.0, 10.0)["channel"] == "II"
+
+
 def test_short_record_reports_not_analysed(qapp, tmp_path):
     """M3: a record shorter than ONE model window produces zero windows. Reported as "0 segments" a
     user reads that as "no problems found"; it means NOTHING WAS ANALYSED. Say so."""
