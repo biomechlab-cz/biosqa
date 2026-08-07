@@ -1,0 +1,17 @@
+# The reproducibility tree is a VERBATIM BYTE COPY of the research monorepo's
+# src/biosqa (reproducibility/scripts/sync_from_src.py), and
+# tests/test_reproducibility_sync.py compares RAW BYTES to prove it has not drifted.
+#
+# On Windows with core.autocrlf=true, git checks these files out with CRLF while the
+# monorepo originals are LF. Byte equality is then impossible and the sync test fails
+# with a full-file "drift" that is really just line endings -- which is exactly what
+# happened after a merge re-materialised the tree. CI never saw it because the runners
+# check out LF.
+#
+# Pin the checkout so the byte-copy contract can actually hold on every platform.
+reproducibility/**/*.py text eol=lf
+
+# The shipped ONNX graphs are gated by an onnx_sha256 in their model cards: any
+# newline translation would change the digest and refuse to load. Never touch them.
+*.onnx binary
+*.png binary
