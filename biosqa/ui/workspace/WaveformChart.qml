@@ -162,10 +162,18 @@ Item {
     // thousands of bands and the old Repeater instantiated a Rectangle for every one of
     // them (startup stall, and N x/width bindings re-evaluated on every pan frame). The
     // bands carry no mouse interaction here, so there is no hit-testing to preserve.
+    //
+    // OFF BY DEFAULT (`settings.waveformQualityBands`). The same run-length information is
+    // already shown twice: by the overview strip beneath the trace and by the segment list
+    // beside it. Painting it a third time directly over the samples tints the whole trace
+    // and works against the one job this view has, which is reading the signal. The painter
+    // is kept and merely gated so restoring it is a toggle, and so the selected-segment
+    // highlight below (which answers "which one did I click?") is unaffected either way.
     Canvas {
         id: bandsLayer
         objectName: "qualityBands"        // tests/test_qml_render.py locates this to sample real pixels
         anchors.fill: parent
+        visible: settings ? settings.waveformQualityBands : false
         readonly property var bands: segments.segmentBands
         readonly property real totalDur: segments.totalDurationSec
         readonly property real vs: root.viewStart

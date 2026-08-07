@@ -1,6 +1,6 @@
 ---
 title: "On-device LLM audit (optional)"
-description: "An optional on-demand local-Ollama second opinion — the deterministic model decides, the LLM explains."
+description: "An optional on-demand local-Ollama second opinion. The deterministic model decides, the LLM explains."
 ---
 
 An **on-demand, optional** second opinion on a single flagged window, produced
@@ -25,7 +25,7 @@ For the selected window, the app sends the model three things:
 
 - the window's **numeric SQI summary**,
 - the **runtime guard's findings**, and
-- the quality model's own **verdict** — carrying a real usability estimate
+- the quality model's own **verdict**: carrying a real usability estimate
   rather than a misleading "confidence" number.
 
 The local model returns a **structured second opinion**, which the app
@@ -60,8 +60,8 @@ slow or hung local model cannot stall the rest of the app:
 
 ## When to use
 
-Reach for the audit on a **puzzling segment** — for example a suspected
-false-clean on pre-filtered input — where a plain-language sanity check helps
+Reach for the audit on a **puzzling segment**: for example a suspected
+false-clean on pre-filtered input, where a plain-language sanity check helps
 you reason about what the guards and SQIs are seeing. For routine triage,
 **skip it**: the deterministic verdict is the decision, and the audit adds
 latency without changing it.

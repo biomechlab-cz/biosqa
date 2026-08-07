@@ -1,4 +1,4 @@
-BioSQA Studio — model weights: provenance and inherited terms
+BioSQA Studio, model weights: provenance and inherited terms
 =============================================================
 
 The MIT License in `LICENSE` covers the **source code** of BioSQA Studio. This
@@ -13,7 +13,7 @@ and use them, including commercially, provided the dataset citations below
 travel with them.
 
 **No dataset is redistributed with this app**, and no model here is derived from
-credentialed, non-commercial or data-use-agreement material — see "Why EEG and
+credentialed, non-commercial or data-use-agreement material, see "Why EEG and
 PPG weights are not bundled" at the end.
 
 This is a **provenance statement, not legal advice and not a compliance
@@ -40,13 +40,13 @@ Trained on the ECG corpus of `store_v2`, plus synthetic artifact augmentation:
 
 All seven are open-access: no data use agreement, no credentialing, and no
 non-commercial restriction. Every one requires **attribution**, so an MIT notice
-alone is not sufficient — carry the citations in `README.md` § Datasets forward
+alone is not sufficient, carry the citations in `README.md` § Datasets forward
 with any redistribution.
 
 
 eda.onnx  (v3-combined-fusion-ordlogit)
 ---------------------------------------
-Trained on the EDA corpus of `store_v3` — three cohorts, verified against that
+Trained on the EDA corpus of `store_v3`: three cohorts, verified against that
 store's segment index:
 
   EDABE                                     CC BY 4.0
@@ -71,7 +71,7 @@ but their weights are not distributed here, because their training corpora carry
 terms that open redistribution would not honour:
 
   PPG   MIMIC-III-Ext-PPG is under the PhysioNet Credentialed Health Data
-        License 1.5.0 — access requires a signed data use agreement, and the
+        License 1.5.0, access requires a signed data use agreement, and the
         licence forbids sharing that access onward. PhysioNet's own practice is
         to publish MIMIC-derived *model weights* under the same credentialed
         access rather than openly. Independently of that, WESAD's terms permit

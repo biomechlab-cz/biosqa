@@ -20,6 +20,12 @@ _DEFAULTS: dict[str, object] = {
     "appearance/themeDark": True,
     "appearance/accent": "#35D0BA",
     "appearance/colorBlindTiers": False,
+    # Tier-coloured bands painted over the main waveform. OFF by default: the same
+    # information is already carried by the overview strip under the trace and by the
+    # segment list beside it, and washing the trace in colour makes the signal itself
+    # harder to read, which is what that view is for. The painter is kept, not deleted,
+    # so this is a one-click restore rather than a rebuild.
+    "appearance/waveformQualityBands": False,
     "view/segmentation": "table",   # Quality Segmentation Table/Grid choice, remembered across runs
     "analysis/windowOverlap": 0.5,  # default 50% overlap → finer segment boundaries
     "analysis/recoveryEnabled": True,  # second filtered pass → "recoverable" advisory overlay
@@ -51,6 +57,7 @@ class SettingsController(QObject):
     themeDarkChanged = Signal()
     accentChanged = Signal()
     colorBlindTiersChanged = Signal()
+    waveformQualityBandsChanged = Signal()
     segmentationViewChanged = Signal()
     windowOverlapChanged = Signal()
     recoveryEnabledChanged = Signal()
@@ -68,6 +75,7 @@ class SettingsController(QObject):
         self._theme_dark = _as_bool(self._raw("appearance/themeDark"))
         self._accent = str(self._raw("appearance/accent"))
         self._color_blind = _as_bool(self._raw("appearance/colorBlindTiers"))
+        self._wf_bands = _as_bool(self._raw("appearance/waveformQualityBands"))
         self._seg_view = str(self._raw("view/segmentation")) or "table"
         self._overlap = self._snap_overlap(self._raw_float("analysis/windowOverlap"))
         self._recovery_enabled = _as_bool(self._raw("analysis/recoveryEnabled"))
@@ -128,6 +136,19 @@ class SettingsController(QObject):
         return self._color_blind
 
     colorBlindTiers = Property(bool, _g_color_blind, notify=colorBlindTiersChanged)
+
+    def _g_wf_bands(self) -> bool:
+        return self._wf_bands
+
+    waveformQualityBands = Property(bool, _g_wf_bands, notify=waveformQualityBandsChanged)
+
+    @Slot(bool)
+    def setWaveformQualityBands(self, v: bool) -> None:  # noqa: N802
+        v = bool(v)
+        if v != self._wf_bands:
+            self._wf_bands = v
+            self._store("appearance/waveformQualityBands", v)
+            self.waveformQualityBandsChanged.emit()
 
     @Slot(bool)
     def setColorBlindTiers(self, v: bool) -> None:  # noqa: N802
@@ -278,6 +299,7 @@ class SettingsController(QObject):
         self.setThemeDark(_DEFAULTS["appearance/themeDark"])
         self.setAccent(_DEFAULTS["appearance/accent"])
         self.setColorBlindTiers(_DEFAULTS["appearance/colorBlindTiers"])
+        self.setWaveformQualityBands(_DEFAULTS["appearance/waveformQualityBands"])
         self.setSegmentationView(_DEFAULTS["view/segmentation"])
         self.setWindowOverlap(_DEFAULTS["analysis/windowOverlap"])
         self.setRecoveryEnabled(_DEFAULTS["analysis/recoveryEnabled"])

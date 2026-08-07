@@ -65,6 +65,12 @@ def rendered():
     recordings, segments = ctrl["RecordingListModel"], ctrl["QualitySegmentModel"]
     signal_view = ctrl["SignalViewController"]
 
+    # The over-the-waveform bands are OFF by default (the overview strip and the segment list
+    # already carry the same run-lengths). These tests exist to prove the PAINTER is correct,
+    # so they turn it on explicitly rather than depending on the default, and they would still
+    # catch a broken painter if the default were ever flipped back.
+    ctrl["SettingsController"].setWaveformQualityBands(True)
+
     _pump(600)
     recordings.open(str(RECORD))
     assert _wait_for(lambda: segments.totalCount > 0), "inference never produced segments"

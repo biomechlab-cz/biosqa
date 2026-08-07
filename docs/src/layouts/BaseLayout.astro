@@ -6,7 +6,7 @@ import SiteFooter from '../components/SiteFooter.astro';
 
 interface Props { title?: string; description?: string; wide?: boolean; navVariant?: 'landing' | 'docs' }
 const { title, description = SITE.description, wide = false, navVariant = 'landing' } = Astro.props;
-const fullTitle = title ? `${title} · ${SITE.name}` : `${SITE.name} — ${SITE.tagline}`;
+const fullTitle = title ? `${title} · ${SITE.name}` : `${SITE.name}, ${SITE.tagline}`;
 const canonical = new URL(Astro.url.pathname, Astro.site).href;
 const ogImage = withBase('/og.svg');
 ---
@@ -26,7 +26,7 @@ const ogImage = withBase('/og.svg');
     <meta property="og:image" content={ogImage} />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#0A0D13" />
-    {/* set theme BEFORE first paint — no flash of the wrong theme. Dark is the default. */}
+    {/* set theme BEFORE first paint, no flash of the wrong theme. Dark is the default. */}
     <script is:inline>
       (() => {
         try {

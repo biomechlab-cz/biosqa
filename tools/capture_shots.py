@@ -86,6 +86,10 @@ def main() -> int:
     # user sees dark. Restore afterwards so running this doesn't silently re-theme the dev's app.
     was_dark = settings.themeDark
     settings.setThemeDark(True)
+    # Same reasoning for the over-the-waveform quality bands: pin the DEFAULT (off) so a dev who
+    # switched them on locally does not silently publish a differently-styled hero shot.
+    was_bands = settings.waveformQualityBands
+    settings.setWaveformQualityBands(False)
 
     pump(1200)                                     # let the scene settle before touching anything
 
@@ -110,9 +114,10 @@ def main() -> int:
     pump(400)
 
     # Zoom the trace out to the WHOLE record. At the default 30 s viewport the visible span is a
-    # single Q3 segment, so the workspace shot shows no quality bands at all -- which is precisely
-    # the thing the section exists to show. Full-record view puts the real Q0-Q3 run-length bands
-    # over the waveform.
+    # single Q3 segment, so the overview strip under the trace and the segment list beside it both
+    # show one flat run -- which is precisely what these shots exist to demonstrate. Full-record
+    # view puts the real Q0-Q3 run-lengths into both. (The trace itself is deliberately NOT tinted;
+    # that overlay is off by default, so the waveform reads as a waveform.)
     signal_view = ctrl["SignalViewController"]
     duration = float(recordings.currentDurationSec or 0.0)
     if duration > 0:
@@ -131,7 +136,8 @@ def main() -> int:
             return 1
         print(f"  {view:<13} -> {path.relative_to(ROOT)}  ({img.width()}x{img.height()})")
 
-    settings.setThemeDark(was_dark)                # leave the dev's own preference as we found it
+    settings.setThemeDark(was_dark)                # leave the dev's own preferences as we found them
+    settings.setWaveformQualityBands(was_bands)
     print("done")
     return 0
 

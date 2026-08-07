@@ -1,11 +1,11 @@
-# models/ (Plan 1 artifacts — not produced here)
+# models/ (Plan 1 artifacts, not produced here)
 
 This folder is a **drop-in target**, not a build output of this app. It is
 populated by **Plan 1** (`plans/01_ML_AI_ENGINEERING_PLAN.md`, the
 `biosqa` training package at the repo root) and consumed read-only by
 `biosqa.model.model_card` / `biosqa.inference.onnx_runner`.
 
-Do **not** add training code, checkpoints, or `torch` state dicts here —
+Do **not** add training code, checkpoints, or `torch` state dicts here -
 the app's dependency set is deliberately disjoint from Plan 1's training
 stack (see `app/pyproject.toml`).
 
@@ -20,7 +20,7 @@ models/
 ```
 
 `eeg.*` and `ppg.*` follow the same contract and the app supports both signal
-types, but their weights are **not shipped here** — see
+types, but their weights are **not shipped here**: see
 [Licensing of the shipped weights](#licensing-of-the-shipped-weights). Drop your
 own pair in and the modality works with no code change.
 
@@ -112,11 +112,11 @@ machine-readably in each card:
              "commercial_use": "...", "source_terms": [...] }
 ```
 
-Both blocks are documentation only — `model_card.py` ignores unknown keys, so
+Both blocks are documentation only, `model_card.py` ignores unknown keys, so
 they carry no runtime behaviour. `training_data_hash` is a real SHA-256 digest
 only where the training store recorded a snapshot manifest, and **neither
 shipped model has one**: `ecg` was exported from `store_v2` and `eda` from
 `store_v3`, neither of which wrote a manifest, so both carry a training-run
 nickname and say so in `training_data_provenance.digest_note`. (The withdrawn
 `eeg` model was the only one with a real corpus digest.) `onnx_sha256` is
-unaffected — it is a digest of the shipped graph itself and is enforced at load.
+unaffected. It is a digest of the shipped graph itself and is enforced at load.
