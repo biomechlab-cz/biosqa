@@ -5,30 +5,30 @@ import TierBadge from '../components/TierBadge.astro';
 import { SITE, withBase } from '../lib/site';
 
 const features = [
-  { icon: '◇', cat: 'inference', t: 'On-device inference', d: 'Compact neural quality models run entirely on the CPU via ONNX Runtime — no GPU, no cloud, no training dependencies.' },
+  { icon: '◇', cat: 'inference', t: 'On-device inference', d: 'Compact neural quality models run entirely on the CPU via ONNX Runtime, no GPU, no cloud, no training dependencies.' },
   { icon: '⊹', cat: 'viewing', t: 'Automatic modality detection', d: 'ECG / PPG / EEG / EDA inferred from channel units, names and rate; the matching model auto-loads.' },
-  { icon: '▚', cat: 'quality', t: 'Ordinal Q0–Q3 overlay', d: 'Sliding-window scoring collapses into contiguous run-length quality segments painted on the trace.' },
+  { icon: '▚', cat: 'quality', t: 'Ordinal Q0–Q3 overlay', d: 'Sliding-window scoring collapses into contiguous run-length quality segments, shown in the overview strip and segment list.' },
   { icon: '≋', cat: 'scale', t: 'Scales out-of-core', d: 'Multi-hour recordings are analysed block-wise; the whole signal is never held in memory.' },
-  { icon: '✎', cat: 'workflow', t: 'Editable segmentation', d: 'Trim, split, merge or reclassify segments — the overlay, table and exports update live.' },
+  { icon: '✎', cat: 'workflow', t: 'Editable segmentation', d: 'Trim, split, merge or reclassify segments. The overlay, table and exports update live.' },
   { icon: '◐', cat: 'quality', t: 'Confidence & uncertainty', d: 'Per-segment confidence plus predictive uncertainty, both from the temperature-calibrated distribution.' },
   { icon: '↺', cat: 'quality', t: 'Recoverability advisory', d: 'Flags poor windows a band-pass filter would likely lift to usable (bSQI-corroborated for ECG/PPG).' },
   { icon: '◆', cat: 'xai', t: 'Explainability (XAI)', d: 'On-demand saliency heatmap, group-Shapley feature attribution and a plain-language explanation per segment.' },
-  { icon: '⤓', cat: 'export', t: 'Broad export', d: 'CSV, TSV (BIDS events), JSON, Parquet, WFDB annotation, or MATLAB .mat — with corrections and provenance.' },
+  { icon: '⤓', cat: 'export', t: 'Broad export', d: 'CSV, TSV (BIDS events), JSON, Parquet, WFDB annotation, or MATLAB .mat, with corrections and provenance.' },
 ];
 
 const modalities = [
   { m: 'ECG', c: 'var(--m-ecg)', d: 'Beat morphology, rhythm, baseline wander, motion.', spec: '10 s @ 250 Hz windows',
     path: 'M0 23 L18 23 L22 10 L26 36 L30 8 L34 23 L60 23 L66 22 L70 12 L74 34 L78 23 L110 23 L116 21 L120 10 L124 35 L128 23 L160 23 L168 22 L172 13 L176 33 L180 23 L210 23 L216 22 L220 11 L224 34 L228 23 L260 23' },
-  { m: 'PPG', c: 'var(--m-ppg)', d: 'Pulse morphology, motion and contact artifacts.', spec: 'own trained model',
+  { m: 'PPG', c: 'var(--m-ppg)', d: 'Pulse morphology, motion and contact artifacts.', spec: 'bring your own weights',
     path: 'M0 30 C 20 30, 26 8, 42 12 S 64 30, 86 30 C 106 30, 112 9, 128 13 S 150 30, 172 30 C 192 30, 198 8, 214 12 S 236 30, 260 30' },
-  { m: 'EEG', c: 'var(--m-eeg)', d: 'Muscle/EMG, powerline, electrode and blink artifacts.', spec: 'own trained model',
+  { m: 'EEG', c: 'var(--m-eeg)', d: 'Muscle/EMG, powerline, electrode and blink artifacts.', spec: 'bring your own weights',
     path: 'M0 23 Q 10 8 20 23 T 40 23 Q 50 34 60 23 T 80 20 Q 92 10 104 26 T 128 21 Q 140 33 152 22 T 176 24 Q 188 12 200 25 T 224 22 Q 236 30 248 23 T 260 23' },
-  { m: 'EDA', c: 'var(--m-eda)', d: 'Motion & HF contamination on a slow tonic base.', spec: 'own trained model',
+  { m: 'EDA', c: 'var(--m-eda)', d: 'Motion & HF contamination on a slow tonic base.', spec: '60 s @ 8 Hz windows',
     path: 'M0 38 C 40 38, 60 20, 110 18 S 150 24, 180 22 C 210 20, 230 14, 260 12' },
 ];
 
 const steps = [
-  { n: '1', t: 'Open', d: 'Header-only — any-length recording opens instantly.' },
+  { n: '1', t: 'Open', d: 'Header-only. Any-length recording opens instantly.' },
   { n: '2', t: 'Detect', d: 'Modality inferred; the matching model loads.' },
   { n: '3', t: 'Score', d: 'Sliding-window CPU inference → Q0–Q3 run-length segments.' },
   { n: '4', t: 'Inspect', d: 'Read the verdict, confidence, artifacts and rationale.' },
@@ -36,10 +36,10 @@ const steps = [
 ];
 
 const installs = {
-  source: { label: 'From source', cmd: 'cd app\npython -m venv .venv\n# activate the venv, then:\npip install -e .\nbiosqa-studio          # or: python -m biosqa.main', note: '◆ Runs on Windows, macOS and Linux. No recording needed — bundled dummy_data/ runs the full pipeline.', nc: 'var(--accent)' },
+  source: { label: 'From source', cmd: 'cd app\npython -m venv .venv\n# activate the venv, then:\npip install -e .\nbiosqa-studio          # or: python -m biosqa.main', note: '◆ Runs on Windows, macOS and Linux. No recording needed, bundled dummy_data/ runs the full pipeline.', nc: 'var(--accent)' },
   windows: { label: 'Windows', cmd: '# Download the standalone build from Releases,\n# unzip, and run:\n"BioSQA Studio.exe"', note: '✓ The frozen build is validated on Windows.', nc: 'var(--q3)' },
-  macos: { label: 'macOS', cmd: '# Run from source (a frozen build is not yet proven):\ncd app && python -m venv .venv\nsource .venv/bin/activate\npip install -e . && biosqa-studio', note: '⚠ macOS release build is a work in progress — use source.', nc: 'var(--q1)' },
-  linux: { label: 'Linux', cmd: '# Run from source (a frozen build is not yet proven):\ncd app && python -m venv .venv\nsource .venv/bin/activate\npip install -e . && biosqa-studio', note: '⚠ Linux release build is a work in progress — use source.', nc: 'var(--q1)' },
+  macos: { label: 'macOS', cmd: '# Run from source (a frozen build is not yet proven):\ncd app && python -m venv .venv\nsource .venv/bin/activate\npip install -e . && biosqa-studio', note: '⚠ macOS release build is a work in progress, use source.', nc: 'var(--q1)' },
+  linux: { label: 'Linux', cmd: '# Run from source (a frozen build is not yet proven):\ncd app && python -m venv .venv\nsource .venv/bin/activate\npip install -e . && biosqa-studio', note: '⚠ Linux release build is a work in progress, use source.', nc: 'var(--q1)' },
 };
 const cardJson = `{
   "modality": "ecg",
@@ -58,8 +58,8 @@ const cardJson = `{
       <div class="hero-copy">
         <span class="eyebrow"><span class="eyebrow-dot"></span>Alpha · on-device SQA</span>
         <h1>See which segments of a recording you can <span class="accent">trust</span>.</h1>
-        <p class="lede">Ordinal signal-quality assessment for ECG, PPG, EEG and EDA — graded window by window, on-device, no cloud.</p>
-        <p class="subline muted">Detects the modality, runs a compact neural quality model over a sliding window entirely on the CPU, and paints contiguous Q0–Q3 quality segments right on the trace.</p>
+        <p class="lede">Ordinal signal-quality assessment for ECG, PPG, EEG and EDA, graded window by window, on-device, no cloud.</p>
+        <p class="subline muted">Detects the modality, runs a compact neural quality model over a sliding window entirely on the CPU, and resolves the result into contiguous Q0–Q3 quality segments alongside the trace.</p>
         <div class="cta">
           <a class="btn btn-primary" href="#install">Get started</a>
           <a class="btn btn-ghost" href={withBase('/docs/getting-started/')}>Browse docs</a>
@@ -86,12 +86,12 @@ const cardJson = `{
   <section class="trust">
     <div class="container trust-grid">
       <div>
-        <p class="trust-p"><strong>BioSQA Studio opens a biosignal recording, detects its modality, and scores it on the CPU</strong> <span class="text-2">— overlaying contiguous quality segments so artifact-corrupted regions are obvious at a glance, with editable segmentation, review notes, and standard-format export.</span></p>
+        <p class="trust-p"><strong>BioSQA Studio opens a biosignal recording, detects its modality, and scores it on the CPU,</strong> <span class="text-2">resolving the result into contiguous quality segments so artifact-corrupted regions are obvious at a glance, with editable segmentation, review notes, and standard-format export.</span></p>
         <p class="mono trust-build">Built with PySide6 (Qt 6) + QML · inference via ONNX Runtime on CPU · MIT licensed</p>
       </div>
       <div class="callout callout-warn">
         <span class="callout-glyph">⚠</span>
-        <div><span class="callout-title">Not a medical device.</span> <span class="text-2">A research / engineering tool for exploring signal quality — not certified for clinical or diagnostic use.</span></div>
+        <div><span class="callout-title">Not a medical device.</span> <span class="text-2">A research / engineering tool for exploring signal quality, not certified for clinical or diagnostic use.</span></div>
       </div>
     </div>
   </section>
@@ -100,7 +100,7 @@ const cardJson = `{
   <section id="features" class="section">
     <div class="container">
       <div class="microlabel" data-reveal>Capabilities</div>
-      <h2 data-reveal>An instrument for seeing signal quality — not a black box.</h2>
+      <h2 data-reveal>An instrument for seeing signal quality, not a black box.</h2>
       <div class="feature-grid">
         {features.map((f) => (
           <div class="card feature" data-reveal>
@@ -117,7 +117,13 @@ const cardJson = `{
   <section id="modalities" class="section band">
     <div class="container">
       <div class="microlabel" data-reveal>Modalities</div>
-      <h2 data-reveal>Four signals, four trained models.</h2>
+      <h2 data-reveal>Four signals, one contract.</h2>
+      <p class="text-2" data-reveal style="max-width:62ch;margin:-0.4rem 0 1.4rem">
+        Every modality is an independent model behind the same two-file contract. ECG and EDA
+        weights ship with the app; EEG and PPG open, plot and export, and grade as soon as you
+        supply your own weights, theirs are trained on cohorts whose licences forbid open
+        redistribution.
+      </p>
       <div class="mod-grid">
         {modalities.map((m) => (
           <div class="card mod" style={`--mc:${m.c}`} data-reveal>
@@ -160,13 +166,13 @@ const cardJson = `{
       <div class="microlabel" data-reveal>The interface</div>
       <h2 data-reveal>A working instrument beats any illustration.</h2>
       <div class="shot shot-primary" data-reveal>
-        <div class="shot-bar"><span class="dot" style="background:var(--status-red)"></span><span class="dot" style="background:var(--q1)"></span><span class="dot" style="background:var(--q3)"></span><span class="mono shot-name">BioSQA Studio — workspace</span></div>
+        <div class="shot-bar"><span class="dot" style="background:var(--status-red)"></span><span class="dot" style="background:var(--q1)"></span><span class="dot" style="background:var(--q3)"></span><span class="mono shot-name">BioSQA Studio, workspace</span></div>
         <img
           class="shot-img ar-169"
           src={withBase('shots/workspace.png')}
           width="1920" height="1080"
           loading="lazy" decoding="async"
-          alt="The BioSQA Studio workspace. A 3-minute ECG trace is overlaid with translucent run-length quality bands — green where the model graded Q3, amber Q1, red Q0 — aligned with visible bursts of artifact. The right-hand AI Quality Inspector lists all ten segments with their grades, confidences and detected artifact types."
+          alt="The BioSQA Studio workspace. A 3-minute ECG trace is overlaid with translucent run-length quality bands, green where the model graded Q3, amber Q1, red Q0, aligned with visible bursts of artifact. The right-hand AI Quality Inspector lists all ten segments with their grades, confidences and detected artifact types."
         />
       </div>
       <div class="shot-row">
@@ -200,7 +206,7 @@ const cardJson = `{
         <div>
           <div class="microlabel" data-reveal>The conceptual heart</div>
           <h2 data-reveal>The Q0–Q3 ordinal scale.</h2>
-          <p class="text-2 scale-sub">An <strong>ordinal</strong> grade, not a pass/fail: adjacent grades are "closer" than distant ones. Color is never used alone — always paired with a glyph and a mono code.</p>
+          <p class="text-2 scale-sub">An <strong>ordinal</strong> grade, not a pass/fail: adjacent grades are "closer" than distant ones. Color is never used alone, always paired with a glyph and a mono code.</p>
         </div>
         <label class="cb-switch" data-reveal>
           <span class="cb-txt mono">CB-safe</span>
@@ -228,12 +234,12 @@ const cardJson = `{
       <div data-reveal>
         <div class="microlabel">Bring your own model</div>
         <h2>A two-artifact contract, per modality.</h2>
-        <p class="text-2">The card drives all preprocessing — rate, window length, class order, normalization — so <strong>nothing is hard-coded</strong>. A missing or mismatched card is a hard error at load, never a silent fallback.</p>
+        <p class="text-2">The card drives all preprocessing, rate, window length, class order, normalization, so <strong>nothing is hard-coded</strong>. A missing or mismatched card is a hard error at load, never a silent fallback.</p>
         <ul class="contract-list">
-          <li><span class="mono">models/&lt;modality&gt;.onnx</span> <span class="muted">— input float32[1, 1, L]</span></li>
-          <li><span class="mono">models/&lt;modality&gt;.model_card.json</span> <span class="muted">— the contract</span></li>
+          <li><span class="mono">models/&lt;modality&gt;.onnx</span> <span class="muted">input float32[1, 1, L]</span></li>
+          <li><span class="mono">models/&lt;modality&gt;.model_card.json</span> <span class="muted">the contract</span></li>
         </ul>
-        <div class="callout callout-danger"><span class="callout-glyph">⊘</span><div><span class="callout-title">Fail-loud.</span> <span class="text-2">Card/graph disagreement on modality, shape, or the fused feature vector stops the load — you always know exactly what scored your signal.</span></div></div>
+        <div class="callout callout-danger"><span class="callout-glyph">⊘</span><div><span class="callout-title">Fail-loud.</span> <span class="text-2">Card/graph disagreement on modality, shape, or the fused feature vector stops the load. You always know exactly what scored your signal.</span></div></div>
         <a class="btn btn-ghost" href={withBase('/docs/models/')}>Read the model-card contract →</a>
       </div>
       <div class="code-card" data-reveal>
@@ -247,7 +253,7 @@ const cardJson = `{
   <section id="install" class="section band">
     <div class="container">
       <div class="microlabel" data-reveal>Install</div>
-      <h2 data-reveal>Install & run — no email gate.</h2>
+      <h2 data-reveal>Install & run, no email gate.</h2>
       <div class="tabs" role="tablist" aria-label="Install platform">
         {Object.entries(installs).map(([k, v], i) => (
           <button class:list={['tab', i === 0 && 'active']} data-tab={k} role="tab" aria-selected={i === 0 ? 'true' : 'false'}>{v.label}</button>

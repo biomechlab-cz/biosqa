@@ -14,18 +14,21 @@ Appearance settings are cosmetic and never change the underlying grades or score
 | Theme | Light / Dark |
 | Accent color | Teal / Blue / Purple / Amber |
 | Color-blind-safe tiers | Off / On (blue↔orange palette) |
+| Quality bands over the waveform | Off (default) / On |
 
-The **color-blind-safe tiers** toggle swaps the quality-tier palette to a blue↔orange scheme. Grades are never conveyed by color alone — each tier also carries a glyph and a mono code (Q0..Q3), and Q0 is additionally hatched. See the [quality scale](/biosqa/docs/quality-scale/) for the full encoding.
+The **color-blind-safe tiers** toggle swaps the quality-tier palette to a blue↔orange scheme. Grades are never conveyed by color alone. Each tier also carries a glyph and a mono code (Q0..Q3), and Q0 is additionally hatched. See the [quality scale](/biosqa/docs/quality-scale/) for the full encoding.
+
+**Quality bands over the waveform** is **off by default**. The same run-lengths already appear in the recording overview strip beneath the trace and in the segment list beside it, so tinting the samples themselves is a third copy that makes the signal harder to read. Turn it on if you prefer the grade painted directly onto the trace. Selecting a segment highlights it on the trace either way.
 
 ## Analysis
 
-These settings govern how the open recording is segmented. **Changing any of them re-segments the current recording live** — you do not need to close and re-open the file.
+These settings govern how the open recording is segmented. **Changing any of them re-segments the current recording live**: you do not need to close and re-open the file.
 
 | Setting | Options | Default |
 | --- | --- | --- |
 | Window overlap | 0% / 25% / 50% / 75% / 90% | 50% |
-| Recoverability pass | Off / On | — |
-| Boundary refinement | Off / On | — |
+| Recoverability pass | Off / On | n/a |
+| Boundary refinement | Off / On | n/a |
 
 **Window overlap** trades localization against speed. Higher overlap places windows closer together, so quality transitions are located more finely, but more windows means more inference work per recording. Lower overlap is faster and coarser.
 
@@ -33,7 +36,7 @@ The **recoverability pass** is a second analysis pass; **boundary refinement** s
 
 ## Integrity guard
 
-The integrity guard is the **false-clean guard** — it flags signals that look clean but may be corrupt or pre-filtered.
+The integrity guard is the **false-clean guard**: it flags signals that look clean but may be corrupt or pre-filtered.
 
 | Setting | Options |
 | --- | --- |
@@ -55,7 +58,7 @@ The optional LLM audit sends selected material to a local **Ollama** instance fo
 | Model name | Ollama model identifier |
 | Self-consistency samples | 1 – 5 |
 
-**Self-consistency samples** controls how many independent responses are gathered and reconciled — more samples give a more stable verdict at higher cost. See [LLM audit](/biosqa/docs/llm-audit/) for the full workflow.
+**Self-consistency samples** controls how many independent responses are gathered and reconciled, more samples give a more stable verdict at higher cost. See [LLM audit](/biosqa/docs/llm-audit/) for the full workflow.
 
 ## Remembered UI
 
@@ -65,7 +68,7 @@ Beyond the settings above, the app remembers your **Table / Grid** segmentation 
 
 A short orientation for tuning throughput on long recordings:
 
-- **Lower the window overlap** and **disable the recoverability pass** — these are the main speed levers.
+- **Lower the window overlap** and **disable the recoverability pass**: these are the main speed levers.
 - **Raise the window overlap** to improve boundary resolution, at the cost of more inference per recording.
 
 Because analysis runs block-wise out-of-core, these levers matter most on multi-hour recordings, where the number of windows dominates processing time.

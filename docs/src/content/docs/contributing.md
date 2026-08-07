@@ -13,14 +13,16 @@ The **app source code** is released under the **MIT License**, © Marek Sokol. Y
 
 ### The model weights are not MIT
 
-The MIT grant covers the code, **not the trained `.onnx` weights** shipped in `models/`. Those are derived from third-party biosignal datasets, and some of those sources carry access or use restrictions that the weights inherit:
+The MIT grant covers the code, **not the trained `.onnx` weights** shipped in `models/`. Those are derived from third-party biosignal datasets whose terms the weights inherit. Only models whose entire lineage is open and attribution-based are shipped:
 
-| Model | Restriction inherited from |
-| --- | --- |
-| `eeg.onnx` | **TUAR / TUH EEG** — signed Temple data use agreement; the data may not be redistributed |
-| `ppg.onnx` | **MIMIC-III-Ext-PPG** — PhysioNet credentialed access; **WESAD** — research use, no commercial use |
-| `eda.onnx` | research-use-only cohorts; redistribution terms for derived weights unverified |
-| `ecg.onnx` | open-access PhysioNet cohorts only — attribution required, no access restriction known |
+| Model | Shipped? | Training-data terms |
+| --- | --- | --- |
+| `ecg.onnx` | **yes** | seven open-access PhysioNet cohorts, ODC-BY v1.0 / CC BY 4.0; attribution required, no DUA, no non-commercial clause |
+| `eda.onnx` | **yes** | EDABE (CC BY 4.0) + EDA-Artifact-Detection UTD/AWW (BSD 3-Clause); both permissive, both permit derived works |
+| `ppg.onnx` | **no** | **MIMIC-III-Ext-PPG**: PhysioNet Credentialed Health Data License 1.5.0, signed DUA, access may not be shared onward; **WESAD**: "scientific, non-commercial purposes" only |
+| `eeg.onnx` | **no** | **TUAR / TUH EEG**: signed Neural Engineering Data Consortium agreement restricting redistribution of the data and silent on derived weights |
+
+So the two shipped models **may be redistributed and used commercially, provided the dataset citations travel with them**. The two withheld ones are not in this repository at all; the app still opens EEG and PPG recordings and will use your own weights if you supply them.
 
 Per-model provenance is in [`LICENSE-MODELS`](https://github.com/sokolmarek/biosqa/blob/main/LICENSE-MODELS) in the repository root, and machine-readably in the `license` block of each model card. It is a provenance statement, **not legal advice**: check each source's current terms before redistributing the weights or using them commercially.
 
@@ -48,7 +50,7 @@ models/<modality>.onnx
 models/<modality>.model_card.json
 ```
 
-It **never** imports training code, and it carries **no deep-learning training stack** — the app and the engine have deliberately **disjoint dependency sets**. Inference runs on the CPU via ONNX Runtime. This boundary is a feature, not an accident: it keeps the app small, auditable, and free of the heavy dependencies that model training requires.
+It **never** imports training code, and it carries **no deep-learning training stack**: the app and the engine have deliberately **disjoint dependency sets**. Inference runs on the CPU via ONNX Runtime. This boundary is a feature, not an accident: it keeps the app small, auditable, and free of the heavy dependencies that model training requires.
 
 See [Models & model cards](/biosqa/docs/models/) for how the app loads and validates these files.
 
@@ -67,7 +69,7 @@ The app package separates concerns: the **inference** and **model** layers load 
 
 ## Running tests
 
-The framework-agnostic pieces — the parts that don't require a running Qt event loop — are unit-tested with **pytest**. CI runs the suite on both **Linux and Windows**.
+The framework-agnostic pieces, the parts that don't require a running Qt event loop, are unit-tested with **pytest**. CI runs the suite on both **Linux and Windows**.
 
 ```
 pytest
@@ -77,15 +79,15 @@ pytest
 
 Contributions are welcome. Help is most valuable in two areas:
 
-- **More input formats** — ingestion for **Zarr** and **Parquet** sources, extending the range of recordings the app can open.
-- **Frozen builds** — proving out and hardening the **macOS and Linux** packaged builds.
+- **More input formats**: ingestion for **Zarr** and **Parquet** sources, extending the range of recordings the app can open.
+- **Frozen builds**: proving out and hardening the **macOS and Linux** packaged builds.
 
 > Whatever you add, keep the app's **no-training-deps boundary** intact. The app must not gain a dependency on a deep-learning training stack; if a change would pull one in, it belongs in the engine, not the app.
 
 ## Datasets & attribution
 
-The per-modality models were trained on public biosignal datasets, primarily under the **PhysioNet** umbrella — for ECG: CinC-2011, BUT QDB, European ST-T, MIT-BIH VFDB/NSTDB/SVDB and PTB-XL; for PPG: BUT PPG, PPG-DaLiA, WESAD and MIMIC-III-Ext-PPG; for EEG: TUAR, PhysioMotion, Phantom-EEG, Mind-in-Motion and Motion-Artifact fNIRS+EEG; for EDA: EDABE and EDA-Artifact-Detection (UTD + AWW), with WESAD and PPG-DaLiA in the wider research corpus. The full citation list is in the repository [README](https://github.com/sokolmarek/biosqa#datasets).
+The **shipped** models were trained on these datasets, for ECG: CinC-2011, BUT QDB, European ST-T, MIT-BIH VFDB/NSTDB/SVDB and PTB-XL; for EDA: EDABE and EDA-Artifact-Detection (UTD + AWW). Every one is open access under an attribution licence. The full citation list is in the repository [README](https://github.com/sokolmarek/biosqa#datasets), and carrying it forward is a **condition** of redistributing the weights, not a courtesy: ODC-BY, CC BY 4.0 and BSD 3-Clause all require attribution, so an MIT notice alone is not sufficient.
 
-Some of these sources — for example **TUAR / TUH EEG** and **MIMIC-III-Ext-PPG** — require **credentialed access** or a signed agreement, and are therefore **not redistributed** with the app. As noted above, the derived weights inherit those terms.
+The wider research corpus behind the project also covers PPG (BUT PPG, PPG-DaLiA, WESAD, MIMIC-III-Ext-PPG) and EEG (TUAR, PhysioMotion, Phantom-EEG, Mind-in-Motion, Motion-Artifact fNIRS+EEG). Some of those, **TUAR / TUH EEG**, **MIMIC-III-Ext-PPG**: require credentialed access or a signed agreement, and **WESAD** permits non-commercial use only. No dataset is redistributed here, and no model derived from those sources is shipped.
 
 We cite dataset provenance openly. If you build on or extend the models, please carry that attribution forward and respect the access terms of each source.

@@ -218,6 +218,15 @@ Popup {
                 Switch { checked: settings.colorBlindTiers; onToggled: settings.setColorBlindTiers(checked) }
             }
 
+            FormRow {
+                title: "Quality bands over the waveform"
+                desc: "Tint the trace itself by grade. Off by default: the overview strip and the segment list already show it"
+                Switch {
+                    checked: settings.waveformQualityBands
+                    onToggled: settings.setWaveformQualityBands(checked)
+                }
+            }
+
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.borderSubtle }
 
             // ================= ANALYSIS =================

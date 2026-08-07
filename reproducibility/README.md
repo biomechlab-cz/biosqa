@@ -1,8 +1,8 @@
-# BioSQA — ML experiment reproducibility
+# BioSQA, ML experiment reproducibility
 
 Reference code for the neural **signal-quality-assessment (SQA)** models behind BioSQA Studio: the model
 architectures, the training loop, the evaluation harness, and the ONNX export. This folder is the
-paper-facing subset of the research engine — enough to read and reproduce the ML experiments. The desktop
+paper-facing subset of the research engine, enough to read and reproduce the ML experiments. The desktop
 app (a separate, torch-free package) only *consumes* the exported `<modality>.onnx` + `model_card.json`.
 
 > **Scope.** This is the model + training + eval + export code. It does **not** ship any dataset, and it
@@ -14,19 +14,19 @@ app (a separate, torch-free package) only *consumes* the exported `<modality>.on
 
 ## What the models are
 
-Four per-modality quality models — **ECG, PPG, EEG, EDA** — each scoring a fixed-length window on the
+Four per-modality quality models (**ECG, PPG, EEG, EDA**), each scoring a fixed-length window on the
 ordinal scale **Q0 (unacceptable) · Q1 (poor) · Q2 (acceptable) · Q3 (excellent)**. A shared design with
 per-modality specialisation:
 
-- **Adapter** — a per-modality patchifier (`models/adapters.py`): the raw 1-D window is split into
+- **Adapter**: a per-modality patchifier (`models/adapters.py`): the raw 1-D window is split into
   overlapping patches (`patch_len`/`stride` absorb the sampling rate → ~32–64 tokens/window).
-- **Backbone** — a shared trunk (`models/backbones/`): **PatchTST** (patch transformer, default) or
+- **Backbone**: a shared trunk (`models/backbones/`): **PatchTST** (patch transformer, default) or
   **CNN1D**; a pure-PyTorch **Mamba** selective-scan is included as a research arm.
-- **Heads** (`models/heads.py`) — an **ordinal** grade head (Q0–Q3, ordered-logit / CORN option), a
+- **Heads** (`models/heads.py`). An **ordinal** grade head (Q0–Q3, ordered-logit / CORN option), a
   **binary** usable head, and (ECG/EEG) a **multilabel** artifact-type head.
-- **Second input** (`models/fusion.py`, `models/frontends.py`) — ECG fuses precomputed **spectral
+- **Second input** (`models/fusion.py`, `models/frontends.py`), ECG fuses precomputed **spectral
   channels**; PPG/EEG/EDA fuse a hand-crafted **SQI + dynamics feature vector** (`data/sqa_features.py`).
-- **Domain generalization** — optional **MixStyle** (`models/mixstyle.py`) for cross-cohort robustness.
+- **Domain generalization**: optional **MixStyle** (`models/mixstyle.py`) for cross-cohort robustness.
 
 Per-model architecture specifics (input shapes, heads, fusion, rates) are in **[ARCHITECTURES.md](ARCHITECTURES.md)**.
 
@@ -51,24 +51,24 @@ reproducibility/
 The **eval harness is frozen**: every run calls `eval.protocols.evaluate(...)`; metrics are never
 re-implemented in experiment code, so historical comparisons stay valid.
 
-### `biosqa/` and `scripts/` are GENERATED — do not edit them here
+### `biosqa/` and `scripts/` are GENERATED, do not edit them here
 
 Both trees are mechanically derived from the research monorepo by
 **`scripts/sync_from_src.py`** (`--check` reports drift and exits 1; no argument rewrites):
 
 | tree | source | transform |
 |---|---|---|
-| `biosqa/**.py` | `src/biosqa/<same path>` | none — **verbatim byte copy** |
+| `biosqa/**.py` | `src/biosqa/<same path>` | none, **verbatim byte copy** |
 | `scripts/*.py` | `<monorepo>/scripts/<same name>` | one line: the `sys.path` bootstrap points at `<root>` instead of `<root>/src`, plus a GENERATED banner |
 
 Deliberate exceptions: `biosqa/utils/paths.py` (its repo root must resolve to *this* folder) and
 `scripts/sync_from_src.py` itself (reproducibility-only). To change anything else, edit the
-monorepo copy and re-run the sync — an edit made here is silently reverted by the next sync.
+monorepo copy and re-run the sync. An edit made here is silently reverted by the next sync.
 
 Hand-copying is what let this package rot twice: first `eval/protocols.py` fell behind and lost the
 cluster-bootstrap CI helpers, then nine modules **and both export scripts** shipped pre-fix code
 (an inflated artifact-type `pos_weight`, an un-masked `class_weights`) after the engine had already
-been fixed — i.e. the package reproduced the *buggy* engine. `app/tests/test_reproducibility_sync.py`
+been fixed, i.e. the package reproduced the *buggy* engine. `app/tests/test_reproducibility_sync.py`
 now fails the app test suite whenever the snapshot drifts, so this cannot rot silently again.
 
 ---
@@ -95,7 +95,7 @@ Reproducibility knobs: `utils.seed.seed_everything()` and a **config hash** logg
 installed. Two honest caveats about the wider research engine this folder is drawn from: no
 *data-manifest* hash is computed per run (corpus-level SHA-256 digests exist per built store, in
 that store's `snapshot_manifest.json`, not per run), and most published campaign results come from
-standalone experiment scripts that do **not** go through this entrypoint and are not in MLflow —
+standalone experiment scripts that do **not** go through this entrypoint and are not in MLflow -
 they are recorded as JSON result files plus a running research log.
 
 ---
@@ -105,22 +105,22 @@ they are recorded as JSON result files plus a running research log.
 Config = `configs/base.yaml` deep-merged with `configs/experiment/<name>.yaml`, then CLI dotlist overrides.
 
 ```
-# smoke — synthetic data, fully self-contained, no dataset or data-loader needed:
+# smoke, synthetic data, fully self-contained, no dataset or data-loader needed:
 python scripts/run_experiment.py --experiment dummy_smoke
 
-# a real run — requires the data-acquisition layer (see Data) plus a built store:
+# a real run, requires the data-acquisition layer (see Data) plus a built store:
 python scripts/run_experiment.py --experiment ecg_store --set train.lr=1e-4 seed=1
 
-# export a trained model to ONNX + model card — REFERENCE CODE, see the caveat below:
+# export a trained model to ONNX + model card, REFERENCE CODE, see the caveat below:
 python scripts/export_all_modalities.py          # or the per-modality export_*.py
 ```
 
-The `dummy_smoke` run is self-contained (`data/synthetic.py`) — its data source is imported lazily, so
+The `dummy_smoke` run is self-contained (`data/synthetic.py`). Its data source is imported lazily, so
 it runs against this package alone. The `store` / `cinc2011` sources need the omitted loader layer (below).
 
 > **The `export_*.py` scripts are reference code, not runnable as shipped.** They import
 > `biosqa.data.harmonize`, `biosqa.data.store` and `biosqa.xdomain` (calibration + conformal
-> abstention) at module level, and none of those are part of this subset — the first two are the
+> abstention) at module level, and none of those are part of this subset, the first two are the
 > omitted data-acquisition layer, and `xdomain/` is outside the model+train+eval+export scope. They
 > are included because they are the exact, byte-synced recipe that produced the shipped
 > `<modality>.onnx` + `model_card.json` (architecture, loss weighting, temperature-scaling and
@@ -139,7 +139,7 @@ The models are trained on public biosignal datasets (per-modality below), harmon
 scale and windowed into a unified **Zarr store** (per-modality `[N, 1, L_m]` arrays indexed by `zarr_row`,
 plus a `segments.parquet` of `modality, dataset, subject_id, label_harmonized, split`).
 
-> **The data-acquisition layer is omitted here** — the per-dataset raw-format loaders, the Q0–Q3
+> **The data-acquisition layer is omitted here**: the per-dataset raw-format loaders, the Q0–Q3
 > harmonization, and the store builder/registry (`loaders.py`, `harmonize.py`, `store.py`) handle the raw
 > and access-restricted datasets and are not part of this reference release. What IS included is the
 > modality-agnostic pipeline the models actually consume: windowing (`data/windows.py`), the SQI + dynamics
@@ -150,10 +150,10 @@ plus a `segments.parquet` of `modality, dataset, subject_id, label_harmonized, s
 > **Three of those modules are readable but not importable as shipped**, because they need the omitted
 > `data/harmonize.py` (the Q0–Q3 mapping table) at import time: `data/windows.py`,
 > `data/artifact_labels.py` and `data/artifact_synth.py`. The feature banks, augmentation and
-> `data/synthetic.py` — everything `dummy_smoke` and the SQI/fusion inputs touch — import cleanly.
+> `data/synthetic.py`, everything `dummy_smoke` and the SQI/fusion inputs touch, import cleanly.
 > `app/tests/test_reproducibility_sync.py` pins this list, so it cannot grow unnoticed.
 
-**Datasets (each retains its own license/terms — acquire from the source and respect its access terms):**
+**Datasets (each retains its own license/terms, acquire from the source and respect its access terms):**
 
 | Modality | Datasets | Access |
 |---|---|---|
@@ -171,7 +171,7 @@ plus a `segments.parquet` of `modality, dataset, subject_id, label_harmonized, s
 
 ## License
 
-Code: MIT (see the project root). **Datasets and trained weights are not covered by that grant** —
+Code: MIT (see the project root). **Datasets and trained weights are not covered by that grant** -
 they retain the terms of their respective data sources. Two of those terms are restrictive and apply
 to the weights shipped with the app: **WESAD** is research-use only (no commercial use, PPG + EDA),
 and **MIMIC-III-Ext-PPG** and **TUAR/TUH EEG** require credentialed access / a signed data use

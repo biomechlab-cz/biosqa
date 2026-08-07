@@ -7,7 +7,7 @@ The recording overview is a whole-recording summary you read once to decide whet
 
 ## A bento KPI dashboard
 
-The overview is laid out as a **bento dashboard** — a grid of self-contained tiles, each answering one question about the recording as a whole. Rather than scrolling the signal, you glance at the tiles to judge overall fitness for purpose, then drill into the [segmentation](/biosqa/docs/segmentation/) and [segment inspector](/biosqa/docs/segment-inspector/) views for detail.
+The overview is laid out as a **bento dashboard**: a grid of self-contained tiles, each answering one question about the recording as a whole. Rather than scrolling the signal, you glance at the tiles to judge overall fitness for purpose, then drill into the [segmentation](/biosqa/docs/segmentation/) and [segment inspector](/biosqa/docs/segment-inspector/) views for detail.
 
 ## Headline KPIs
 
@@ -16,7 +16,7 @@ The top tiles carry the numbers you act on:
 | KPI | Meaning |
 | --- | --- |
 | **Total duration** | Length of the recording as loaded. |
-| **Usable share** | The combined **Q3 + Q2** percentage — the fraction graded acceptable or excellent. |
+| **Usable share** | The combined **Q3 + Q2** percentage. The fraction graded acceptable or excellent. |
 | **Per-tier fractions** | The share of the recording in each grade, Q0 through Q3. |
 
 **Usable share** is the single number most often used to accept or reject a recording. Recall that **usable = Q2 + Q3**: Q2 (acceptable) supports rate and coarse analytics, Q3 (excellent) supports all analytics. See the [quality scale](/biosqa/docs/quality-scale/) for what each tier permits.
@@ -29,7 +29,7 @@ A **donut** renders the Q0..Q3 tier fractions as a ring. Each arc carries both *
 
 ## Per-modality timeline & artifact bars
 
-For each modality present, the overview shows a **quality-ribbon timeline** — a compressed strip that colors the recording by grade across its full duration, so you can see whether poor quality is a transient artifact burst or sustained degradation across the record.
+For each modality present, the overview shows a **quality-ribbon timeline**: a compressed strip that colors the recording by grade across its full duration, so you can see whether poor quality is a transient artifact burst or sustained degradation across the record.
 
 Alongside it, **artifact-type bars** summarise which artifact classes dominate the recording. Where the timeline tells you *when* quality drops, the artifact bars tell you *what kind* of corruption is responsible.
 
@@ -52,8 +52,8 @@ Because the app consumes only `models/<modality>.onnx` plus its `models/<modalit
 When relevant, the dock also surfaces **record-level guard and data-quality flags** alongside the KPIs. Two indices describe how far the recording sits from the model's training distribution:
 
 - a **domain-shift index**, and
-- a **novelty fraction** — how much of the signal's SQI signature is unlike anything seen in training.
+- a **novelty fraction**: how much of the signal's SQI signature is unlike anything seen in training.
 
 > A high domain-shift index or novelty fraction means the grades are extrapolations: the model is scoring signal whose SQI signature it was not trained on, so treat the assessment with corresponding caution.
 
-These indicators come from the same runtime layer that raises the other flags — see [Runtime guards](/biosqa/docs/runtime-guards/) for what each guard checks and how to read it.
+These indicators come from the same runtime layer that raises the other flags, see [Runtime guards](/biosqa/docs/runtime-guards/) for what each guard checks and how to read it.

@@ -3,17 +3,17 @@ title: "Troubleshooting"
 description: "Recording won't open, model fails to load, slow inference, nothing to export, LLM audit, rendering quirks."
 ---
 
-Symptoms you may hit while running BioSQA Studio, each with its likely cause and the fix. Most are deliberate guards, not defects — the app prefers a clear error over a silently-wrong grade.
+Symptoms you may hit while running BioSQA Studio, each with its likely cause and the fix. Most are deliberate guards, not defects. The app prefers a clear error over a silently-wrong grade.
 
 ## A recording won't open
 
-**Cause.** An unsupported or malformed file — typically a header the app cannot parse.
+**Cause.** An unsupported or malformed file, typically a header the app cannot parse.
 
 **Fix.** The app reports a clear error rather than crashing. Confirm the file is in a **supported format** (see [Opening recordings](/biosqa/docs/opening-recordings/)). For a generic numeric file with no self-describing header, the app cannot infer the signal type, so **force a modality** on open.
 
 ## The model fails to load
 
-This is **by design**. Each modality has its own `models/<modality>.onnx` paired with a `models/<modality>.model_card.json`. At load time the app checks the card against the ONNX graph — modality, input shape, and feature-vector definition must agree.
+This is **by design**. Each modality has its own `models/<modality>.onnx` paired with a `models/<modality>.model_card.json`. At load time the app checks the card against the ONNX graph, modality, input shape, and feature-vector definition must agree.
 
 > A missing or mismatched model card is a **hard error at load**. This is intentional: it guarantees you never receive grades from a model that doesn't match its declared contract.
 
@@ -27,7 +27,7 @@ This is **by design**. Each modality has its own `models/<modality>.onnx` paired
 
 ## There's nothing to export
 
-**Cause.** Export is only meaningful after a recording has been analysed and segmented — there are no results to write yet.
+**Cause.** Export is only meaningful after a recording has been analysed and segmented. There are no results to write yet.
 
 **Fix.** **Run inference first**: open and analyse a recording so segmentation produces per-segment grades, then export. See [Exporting](/biosqa/docs/exporting/).
 

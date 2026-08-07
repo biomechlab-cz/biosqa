@@ -31,14 +31,42 @@ def _raw(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+#: Datasets whose terms an openly-licensed weight release cannot honour: PhysioNet
+#: credentialed access (MIMIC), non-commercial only (WESAD), or a signed data use
+#: agreement that is silent on derived works (TUAR). No SHIPPED model may have any of
+#: these in its lineage -- that is the whole reason eeg.onnx and ppg.onnx are not here.
+RESTRICTED_SOURCES = ("TUAR", "MIMIC", "WESAD")
+
+
 def test_license_models_exists_and_covers_every_shipped_model():
     text = (APP / "LICENSE-MODELS").read_text(encoding="utf-8")
     assert "MIT" in text and "LICENSE" in text
     for path in CARDS:
         assert f"{path.name.split('.')[0]}.onnx" in text
-    # the three restrictions the project actually inherits
-    for source in ("TUAR", "MIMIC", "WESAD"):
+    # and it explains why the other two modalities have no weights, naming the sources
+    # responsible -- a reader must not have to guess whether they were forgotten
+    for source in RESTRICTED_SOURCES:
         assert source in text
+
+
+def test_no_shipped_model_has_restricted_lineage():
+    """The compliance guard. Removing eeg/ppg is only durable if re-adding a model with
+    credentialed, non-commercial or DUA-bound training data fails loudly."""
+    for path in CARDS:
+        terms = " ".join(_raw(path)["license"]["source_terms"])
+        cohorts = " ".join(_raw(path)["training_data_provenance"]["cohorts"])
+        for source in RESTRICTED_SOURCES:
+            assert source not in terms and source not in cohorts, (
+                f"{path.name} declares {source} in its lineage, but it is shipped in a "
+                f"repo whose weights are offered under attribution-only terms")
+        assert _raw(path)["license"]["redistribution"] == "attribution-required"
+
+
+def test_the_withheld_weights_are_actually_absent():
+    for modality in ("eeg", "ppg"):
+        assert not (MODELS / f"{modality}.onnx").exists(), (
+            f"{modality}.onnx is back in models/ -- see LICENSE-MODELS for why it is withheld")
+        assert not (MODELS / f"{modality}.model_card.json").exists()
 
 
 @pytest.mark.parametrize("path", CARDS, ids=lambda p: p.stem)

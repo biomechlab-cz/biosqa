@@ -175,11 +175,13 @@ class ModelCard:
         Returns the verified digest, or ``None`` when the card carries no digest: verification is
         then SKIPPED, never faked. A mismatch is a hard ``ModelCardError``.
 
-        All four shipped cards now carry a digest, so this is live on every real load. It catches the
-        one substitution the runner's other checks cannot: ``app/dist/.../eeg.onnx`` is a v4 graph of
-        exactly the same byte SIZE (2,298,439) as the v5 ``app/models/eeg.onnx``, with the same
-        modality, L_m (1280), head names and head widths -- identical under every structural check,
-        and distinguishable only by digest (2f10ee74... vs cf80f542...).
+        Every shipped card carries a digest, so this is live on every real load. It catches the one
+        substitution the runner's other checks cannot, as an EEG build once demonstrated: a stale v4
+        ``eeg.onnx`` under ``app/dist/`` had exactly the same byte SIZE (2,298,439) as the v5 graph,
+        with the same modality, L_m (1280), head names and head widths -- identical under every
+        structural check, and distinguishable only by digest (2f10ee74... vs cf80f542...). Those EEG
+        weights are no longer shipped (see LICENSE-MODELS), but the failure mode is generic and the
+        gate applies to whatever is in ``models/``, including weights a user supplies themselves.
         """
         if self.onnx_sha256 is None:
             return None

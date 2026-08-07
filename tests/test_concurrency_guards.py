@@ -271,10 +271,13 @@ def test_selection_driven_sqi_fills_the_breakdown_and_usability_panels(qapp, tmp
 
     This test therefore drives the REAL path (``selectByIndex`` -> ``selectedSegmentChanged`` -> the
     QML ``Connections`` handler in QualityInspectorPanel.qml -> ``requestSqi``) and asserts the panels
-    fill. EEG, because ``usability_verdicts`` is per-band for EEG and ``[]`` for ECG by design."""
+    fill. EDA, because ``usability_verdicts`` returns per-component verdicts (SCL vs SCR) for EDA and
+    ``[]`` for ECG by design, so only a non-ECG modality exercises the usability panel. This used to
+    use EEG for the same reason; EEG weights are not bundled in this release (see LICENSE-MODELS), and
+    EDA is the shipped modality with the same non-empty-verdict property."""
     from biosqa.io.synth import write_test_recording
 
-    rec = write_test_recording("eeg", tmp_path, minutes=1.0)
+    rec = write_test_recording("eda", tmp_path, minutes=1.0)
     engine = build_engine()
     ctl = engine._biosqa_controllers
     recordings, segments, selection, guard, coordinator = ctl[1], ctl[4], ctl[5], ctl[9], ctl[11]

@@ -9,17 +9,17 @@ The workspace is where you read a recording against its quality grades: the raw 
 
 The workspace uses a **docked, resizable layout** with three regions:
 
-- The **file/channel tree** on the left — the open recording and its channels.
+- The **file/channel tree** on the left. The open recording and its channels.
 - The **waveform plot canvas** in the center, carrying the trace and the **quality-band overlay**.
 - The **AI Quality Inspector** on the right.
 
 An **activity rail** switches between full-bleed views: **Workspace**, **Overview**, **Segmentation**, and **Segment inspector**. The dock boundaries are resizable, so you can trade space between the tree, the canvas, and the inspector as the task demands.
 
-> The center canvas is the reference surface. The Overview, Segmentation, and Segment inspector views (reached from the activity rail) present the same recording at different granularities — see [Recording overview](/biosqa/docs/recording-overview/), [Segmentation](/biosqa/docs/segmentation/), and [Segment inspector](/biosqa/docs/segment-inspector/).
+> The center canvas is the reference surface. The Overview, Segmentation, and Segment inspector views (reached from the activity rail) present the same recording at different granularities, see [Recording overview](/biosqa/docs/recording-overview/), [Segmentation](/biosqa/docs/segmentation/), and [Segment inspector](/biosqa/docs/segment-inspector/).
 
-## Reading the overlay
+## Reading the grades
 
-Each **quality segment** is drawn as a translucent, **tier-colored band** over the trace. The band co-renders the **tier glyph** and the **mono code** (Q0..Q3) so the grade is legible without relying on color:
+Each **quality segment** is shown as a **tier-colored band**, carrying the **tier glyph** and the **mono code** (Q0..Q3) so the grade is legible without relying on color:
 
 | Grade | Meaning | Glyph | Code |
 |-------|---------|-------|------|
@@ -28,15 +28,17 @@ Each **quality segment** is drawn as a translucent, **tier-colored band** over t
 | Q2 | acceptable | ✓ | Q2 |
 | Q3 | excellent | ✓ | Q3 |
 
-Band **opacity scales gently with confidence** — lower-confidence grades read fainter. **Q0 bands are hatched** in addition to their color and glyph, so the discard tier stands out even in a color-blind-safe palette. For the full grade definitions, see [Quality scale](/biosqa/docs/quality-scale/).
+Band **opacity scales gently with confidence**: lower-confidence grades read fainter. **Q0 bands are hatched** in addition to their color and glyph, so the discard tier stands out even in a color-blind-safe palette. For the full grade definitions, see [Quality scale](/biosqa/docs/quality-scale/).
+
+These bands live in the **recording overview strip** beneath the trace and in the **segment list** beside it. The waveform itself is left untinted, so the signal reads as a signal: the same run-lengths are already shown twice, and washing a third copy over the samples fights the one job the canvas has. Selecting a segment still highlights it directly on the trace, which answers *which one am I looking at* without recoloring everything. If you prefer the old behavior, **Settings → Quality bands over the waveform** turns the overlay back on.
 
 ## Navigation
 
 Three tools move you through the trace:
 
-- **Pan** — drag the canvas along the time axis.
-- **Zoom** — drag-box a region, or use the mouse wheel.
-- **Measure** — read a **Δ-time** between two points.
+- **Pan**: drag the canvas along the time axis.
+- **Zoom**: drag-box a region, or use the mouse wheel.
+- **Measure**: read a **Δ-time** between two points.
 
 A **minimap navigator** gives an hours-scale overview strip carrying a **quality ribbon** and a **draggable viewport** box. Move the viewport to jump the main canvas to any point in the recording.
 
@@ -52,7 +54,7 @@ Hovering the trace shows a tooltip with the **timestamp**, the **sample value**,
 
 ## Click-to-select, synced everywhere
 
-Selecting a segment in **any** view — the plot, the minimap, the run-length track, the table, or the inspector — **highlights it everywhere** and can **center the view** on it. Selection is a single shared state across the app, so you can pick a segment where it is easiest to see and read it where it is most useful.
+Selecting a segment in **any** view, the plot, the minimap, the run-length track, the table, or the inspector, **highlights it everywhere** and can **center the view** on it. Selection is a single shared state across the app, so you can pick a segment where it is easiest to see and read it where it is most useful.
 
 ## Out-of-core behavior
 

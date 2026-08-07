@@ -3,16 +3,16 @@ title: "The Q0–Q3 quality scale"
 description: "The four ordinal grades, run-length bands, confidence/uncertainty, and the artifact types."
 ---
 
-BioSQA Studio grades every window of a signal on a four-level ordinal scale from Q0 (unacceptable) to Q3 (excellent). This page explains what each grade means, how per-window scores become the bands you see on the trace, and the confidence, uncertainty, and artifact-type information attached to each segment.
+BioSQA Studio grades every window of a signal on a four-level ordinal scale from Q0 (unacceptable) to Q3 (excellent). This page explains what each grade means, how per-window scores become the quality bands you see in the overview strip and segment list, and the confidence, uncertainty, and artifact-type information attached to each segment.
 
 ## The four grades
 
-The scale is **ordinal**: higher grades support more downstream analysis. "**Usable**" is shorthand for **Q2 + Q3** — signal you can compute something meaningful from.
+The scale is **ordinal**: higher grades support more downstream analysis. "**Usable**" is shorthand for **Q2 + Q3**: signal you can compute something meaningful from.
 
 | Grade | Name | Glyph | Supports |
 |-------|------|-------|----------|
 | **Q3** | Excellent | ✓ | All analytics, including fine morphology and HRV |
-| **Q2** | Acceptable | ✓ | Rate and coarse features — not fine morphology |
+| **Q2** | Acceptable | ✓ | Rate and coarse features, not fine morphology |
 | **Q1** | Poor | ⚠ | Partially corrupted; use with caveats |
 | **Q0** | Unacceptable | ⊘ | Dominated by artifact; discard |
 
@@ -20,15 +20,15 @@ The grade tells you what a segment is *good enough for*, not just whether it is 
 
 ## Ordinal, not binary
 
-The four grades form a gradient, not four unrelated buckets. Adjacent grades are "closer" than distant ones — mistaking Q2 for Q3 is a smaller error than mistaking Q2 for Q0. During model development this is measured with **quadratic-weighted kappa**, which penalizes distant confusions more than near ones, alongside **macro-F1** and **Cohen's kappa**.
+The four grades form a gradient, not four unrelated buckets. Adjacent grades are "closer" than distant ones, mistaking Q2 for Q3 is a smaller error than mistaking Q2 for Q0. During model development this is measured with **quadratic-weighted kappa**, which penalizes distant confusions more than near ones, alongside **macro-F1** and **Cohen's kappa**.
 
 > As a user, the practical takeaway is to treat the scale as a **gradient**: a boundary between Q1 and Q2 is a soft transition, not a hard cliff, and a recording that hovers around a grade boundary deserves a closer look. See [Manual review](/biosqa/docs/manual-review/) when you disagree with a call.
 
 ## From per-window scores to run-length bands
 
-The model does not grade the whole recording at once. It scores **overlapping, fixed-length windows** as it streams across the signal. Where adjacent windows share the same grade, those windows are **run-length-encoded** into a single contiguous **segment**, and each segment is painted as a band on the trace.
+The model does not grade the whole recording at once. It scores **overlapping, fixed-length windows** as it streams across the signal. Where adjacent windows share the same grade, those windows are **run-length-encoded** into a single contiguous **segment**, and each segment appears as a band in the recording overview and the segment list.
 
-The **window length is fixed by the model card**, not by the UI — for example, ECG at 10 s and 250 Hz. You cannot change it from the interface; it is a property of the trained model. This is why segment boundaries fall on window-aligned positions. For how these bands are rendered and navigated, see [Segmentation](/biosqa/docs/segmentation/).
+The **window length is fixed by the model card**, not by the UI, for example, ECG at 10 s and 250 Hz. You cannot change it from the interface; it is a property of the trained model. This is why segment boundaries fall on window-aligned positions. For how these bands are rendered and navigated, see [Segmentation](/biosqa/docs/segmentation/).
 
 ## The palette and the color-blind-safe alternate
 
@@ -46,14 +46,14 @@ Each segment carries two numbers derived from the model's **temperature-calibrat
 
 | Quantity | Definition |
 |----------|------------|
-| **Confidence** | The calibrated **max-softmax** — how strongly the model backs its chosen grade |
-| **Uncertainty** | The **normalized softmax entropy** — how spread the distribution is across grades |
+| **Confidence** | The calibrated **max-softmax**: how strongly the model backs its chosen grade |
+| **Uncertainty** | The **normalized softmax entropy**: how spread the distribution is across grades |
 
-Because both come from the *calibrated* distribution, they are meant to be read as honest self-assessments rather than raw logits. **Uncertainty is surfaced in the interface** and turns **amber** when a segment is shaky — a cue to inspect it manually rather than trust the grade at face value. The [Segment inspector](/biosqa/docs/segment-inspector/) shows these values per segment.
+Because both come from the *calibrated* distribution, they are meant to be read as honest self-assessments rather than raw logits. **Uncertainty is surfaced in the interface** and turns **amber** when a segment is shaky. A cue to inspect it manually rather than trust the grade at face value. The [Segment inspector](/biosqa/docs/segment-inspector/) shows these values per segment.
 
 ## Artifact types flagged
 
-For modalities that include an **artifact head**, the model additionally produces a **multilabel** tagging of the *kind* of corruption present in a segment — several types can co-occur. Names are plain-language:
+For modalities that include an **artifact head**, the model additionally produces a **multilabel** tagging of the *kind* of corruption present in a segment, several types can co-occur. Names are plain-language:
 
 | Type | Type |
 |------|------|
