@@ -1,0 +1,286 @@
+{
+  "modality": "eda",
+  "L_m": 480,
+  "fs_hz": 8.0,
+  "class_order": [
+    "Q0_unacceptable",
+    "Q1_poor",
+    "Q2_acceptable",
+    "Q3_excellent"
+  ],
+  "normalization": {
+    "method": "none"
+  },
+  "training_data_hash": "eda-combined-fusion-store_v3",
+  "model_version": "v3-combined-fusion-ordlogit",
+  "onnx_sha256": "edd2294a9b8fe99c984526589992e46312566336f5253fb04af371ebd6c741ed",
+  "training_data_provenance": {
+    "store": "data/store_v3",
+    "cohorts": [
+      "EDABE",
+      "EDA-Artifact-Detection (UTD)",
+      "EDA-Artifact-Detection (AWW)"
+    ],
+    "digest": null,
+    "digest_note": "no snapshot manifest was recorded for store_v3, so no training-corpus digest is available; 'training_data_hash' above is a training-run nickname, NOT a hash",
+    "note": "cohort list verified against the store's segment index; WESAD (EDA) and PPG-DaLiA (EDA) are part of the wider research corpus (store_v8) but NOT of this shipped model's training store"
+  },
+  "license": {
+    "code_license": "MIT (app/LICENSE) -- covers the app source, not these weights",
+    "weights_terms": "app/LICENSE-MODELS",
+    "redistribution": "attribution-required",
+    "commercial_use": "permitted by every training source",
+    "source_terms": [
+      "EDABE: CC BY 4.0 (Mendeley Data 10.17632/w8fxrg4pv5.2)",
+      "EDA-Artifact-Detection (UT Dallas): BSD 3-Clause",
+      "EDA-Artifact-Detection (Alan Walks Wales): BSD 3-Clause"
+    ],
+    "verified": "2026-08-07, individually against each provider licence page",
+    "note": "CC BY 4.0 and BSD 3-Clause are both permissive and explicitly permit redistribution of derived works. BSD 3-Clause additionally requires its copyright notice and disclaimer to accompany binary redistributions and forbids endorsement using the holders names; both are satisfied by carrying LICENSE-MODELS. Supersedes the earlier review-required/unverified statement, which predated per-source verification. Provenance statement, not legal advice."
+  },
+  "inputs": [
+    "x_raw",
+    "x_feat"
+  ],
+  "feature_preprocessing": {
+    "fn": "combined_vector",
+    "modality": "eda",
+    "feat_names": [
+      "eda_haar1_std",
+      "eda_haar1_max",
+      "eda_haar1_eratio",
+      "eda_haar2_std",
+      "eda_haar2_max",
+      "eda_haar2_eratio",
+      "eda_haar3_std",
+      "eda_haar3_max",
+      "eda_haar3_eratio",
+      "eda_haar4_std",
+      "eda_haar4_max",
+      "eda_haar4_eratio",
+      "eda_detail_approx_ratio",
+      "eda_dmax",
+      "eda_drms",
+      "sk_max",
+      "sk_mean",
+      "sk_flat",
+      "disp_ent",
+      "rqa_det",
+      "rqa_mean_diag",
+      "rqa_long_diag",
+      "jump_ratio",
+      "bv_rv_ratio",
+      "op_forbidden",
+      "op_self_trans",
+      "op_trans_ent",
+      "cpp",
+      "cqi"
+    ],
+    "n_features": 29,
+    "note": "sqa_features.combined_vector (per-modality SQI pack ++ advanced dynamics/HOS); pure numpy (numpy.rfft only); graph z-scores x_raw and standardizes x_feat (baked)."
+  },
+  "heads": [
+    {
+      "name": "grade",
+      "output_name": "q_logits",
+      "kind": "ordinal",
+      "activation": "softmax",
+      "class_order": [
+        "Q0_unacceptable",
+        "Q1_poor",
+        "Q2_acceptable",
+        "Q3_excellent"
+      ]
+    },
+    {
+      "name": "usable",
+      "output_name": "bin_logits",
+      "kind": "binary",
+      "activation": "softmax",
+      "class_order": [
+        "unusable",
+        "usable"
+      ]
+    }
+  ],
+  "calibration": {
+    "location": "onnx_graph",
+    "temperatures": {
+      "grade": 0.75,
+      "usable": 3.0
+    },
+    "fit_partition": "validation",
+    "evaluation_partition": "validation (store_v3) \u2014 the same split the temperature grid was minimized on; see held_out_ece for the held-out measurement",
+    "grade_ece": [
+      0.1105,
+      0.0786
+    ],
+    "usable_ece": [
+      0.1307,
+      0.0284
+    ],
+    "partition_note": "the ECE pairs above are measured on the SAME validation split the temperature grid was minimized on, so the post-scaling number is an optimization minimum and optimistic. held_out_ece below is the held-out measurement, and it is the worst of the four shipped cards: no unseen-SUBJECT population of the training cohorts exists at all (every store_v3 EDA subject survives into store_v8 test), so the only held-out EDA windows are two cohorts store_v3 never had -- and there the grade head's post-scaling ECE is 0.5496 with 10.9% accuracy, i.e. the temperature makes calibration WORSE (0.4549 -> 0.5496) off-cohort.",
+    "held_out_ece": {
+      "partition": "data/store_v8 test split, restricted to subjects absent from both the train and val partitions of data/store_v3 (this graph's training store)",
+      "population_kind": "cross_cohort: every unseen subject belongs to PPG-DaLiA (EDA) or WESAD (EDA), cohorts absent from store_v3 -- so this is a cross-cohort number, NOT a within-distribution held-out one",
+      "n_windows": 742,
+      "n_subjects": 6,
+      "grade": [
+        0.4549,
+        0.5496
+      ],
+      "usable": [
+        0.7548,
+        0.6833
+      ],
+      "full_store_v8_test_partition": {
+        "n_windows": 1488,
+        "grade": [
+          0.1448,
+          0.2395
+        ],
+        "usable": [
+          0.3861,
+          0.3075
+        ],
+        "why_not_the_headline": "50.1% of these windows belong to subjects that were in store_v3's train or val partition; the other 49.9% are the two unseen cohorts, so this partition is a 50/50 blend of seen subjects and off-cohort ones and is not a held-out figure either way"
+      },
+      "reading": "EDA is the modality with no honest in-distribution held-out calibration number available from the locked corpus. Both populations reported here already exceed the validation ECE by 3x-7x. Treat the shipped 0.0786 as a fit-partition figure only.",
+      "pair_convention": "[pre_scaling, as_shipped], same as grade_ece/usable_ece above. The graph emits raw_logits/T, so the pre-scaling logits are recovered exactly as graph_logits * T -- no model was loaded and the baked-in temperature is unchanged.",
+      "estimator": "biosqa.xdomain.calibration.expected_calibration_error at its default n_bins=15 (equal-width top-1-confidence bins) -- the same function and bin count that produced grade_ece/usable_ece above, so the two columns are comparable",
+      "measured_by": "scripts/measure_heldout_calibration.py (onnxruntime forward over this .onnx; trains nothing, exports nothing)",
+      "source": "data/heldout_calibration.json"
+    }
+  },
+  "routing": "grade+usable <- raw trunk fused with host combined SQI+dynamics vector; grade = ordinal ordered-logit",
+  "input_contract": {
+    "expects": "raw device-native signal (unfiltered)",
+    "reports": "quality of the signal AS PROVIDED \u2014 if the input was pre-filtered, this is the post-filter quality",
+    "caveat": "a pre-filtered but still-corrupted signal can be under-flagged (false-clean): an aggressive low-pass/band-limit strips the high-frequency cues the model keys on. The app runs biosqa.inference.prefilter.detect_prefiltering() to warn when the input looks pre-filtered."
+  },
+  "novelty": {
+    "method": "mahalanobis_sqi",
+    "feature_names": [
+      "Motion",
+      "Skewness"
+    ],
+    "mean": [
+      0.077409,
+      0.06764
+    ],
+    "std": [
+      0.138383,
+      1.740182
+    ],
+    "inv_corr": [
+      [
+        1.004282,
+        0.06558
+      ],
+      [
+        0.06558,
+        1.004282
+      ]
+    ],
+    "d2_threshold": 28.3858,
+    "reference": "data/store_v6 n=5801"
+  },
+  "feature_attribution": {
+    "feature_fn": "combined_vector",
+    "feature_names": [
+      "eda_haar1_std",
+      "eda_haar1_max",
+      "eda_haar1_eratio",
+      "eda_haar2_std",
+      "eda_haar2_max",
+      "eda_haar2_eratio",
+      "eda_haar3_std",
+      "eda_haar3_max",
+      "eda_haar3_eratio",
+      "eda_haar4_std",
+      "eda_haar4_max",
+      "eda_haar4_eratio",
+      "eda_detail_approx_ratio",
+      "eda_dmax",
+      "eda_drms",
+      "sk_max",
+      "sk_mean",
+      "sk_flat",
+      "disp_ent",
+      "rqa_det",
+      "rqa_mean_diag",
+      "rqa_long_diag",
+      "jump_ratio",
+      "bv_rv_ratio",
+      "op_forbidden",
+      "op_self_trans",
+      "op_trans_ent",
+      "cpp",
+      "cqi"
+    ],
+    "reference_mean": [
+      0.1857078435126071,
+      0.8291806854152431,
+      0.05037874520076609,
+      0.2457127093905583,
+      1.0747511068197588,
+      0.034198548751269604,
+      0.3666329710899542,
+      1.448359508484602,
+      0.02799114188638244,
+      0.6337069537291924,
+      2.116350499500831,
+      0.035549353316581496,
+      0.07971250064250489,
+      1.291520498804748,
+      0.2624952046802888,
+      6.575407985963858,
+      2.7527379056229258,
+      0.4420157659065263,
+      0.5405827068208522,
+      0.9380703596274058,
+      8.55166373348236,
+      1.0,
+      0.07616679641154284,
+      1.0990081117550532,
+      0.0075555556714534755,
+      0.5588791048377753,
+      0.6984126102651392,
+      0.3329080173013111,
+      3.1251761010487873
+    ],
+    "reference_std": [
+      0.2562896273902384,
+      1.5153873124309418,
+      0.11270529880669974,
+      0.27405905268747804,
+      1.3124322351740483,
+      0.06690835012380154,
+      0.2930487443434298,
+      1.3372916855599406,
+      0.04392091156360945,
+      0.3915331696939919,
+      1.5076532312780002,
+      0.04030083314293919,
+      0.22061974391288902,
+      2.24730321568607,
+      0.3586210982150506,
+      16.025539523292416,
+      8.076010269440562,
+      0.39378650341006605,
+      0.11846102544793992,
+      0.06289516044441289,
+      6.576904373233681,
+      0.0,
+      0.11875471368370055,
+      0.2812180437710232,
+      0.05180399901279273,
+      0.21058277491128755,
+      0.17079640698338586,
+      0.18065842528463807,
+      0.8633273058651484
+    ],
+    "reference_tier": "Q3",
+    "n_windows": 1500
+  }
+}

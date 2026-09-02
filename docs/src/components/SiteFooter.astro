@@ -1,0 +1,56 @@
+---
+import { SITE, withBase } from '../lib/site';
+const cols = [
+  { h: 'Product', links: [
+    { t: 'Features', u: withBase('/#features') },
+    { t: 'Documentation', u: withBase('/docs/getting-started/') },
+    { t: 'Download', u: withBase('/#install') },
+  ]},
+  { h: 'Project', links: [
+    { t: 'GitHub', u: SITE.repo },
+    { t: 'Issues', u: SITE.repo + '/issues' },
+    { t: 'Contributing', u: withBase('/docs/contributing/') },
+  ]},
+  { h: 'Science', links: [
+    { t: 'Datasets & attribution', u: withBase('/docs/contributing/') },
+    { t: 'Model cards', u: withBase('/docs/models/') },
+    { t: 'License (MIT)', u: SITE.repo + '/blob/main/LICENSE' },
+    { t: 'Model weights: terms', u: SITE.repo + '/blob/main/LICENSE-MODELS' },
+  ]},
+];
+---
+<footer class="footer">
+  <div class="container footer-inner">
+    <div class="footer-brand">
+      <div class="brand-name">BioSQA <span class="brand-studio">Studio</span></div>
+      <p class="muted footer-tag">{SITE.tagline}.</p>
+      <p class="footer-note text-2">A research/engineering tool, <strong>not a medical device</strong>, not certified for clinical or diagnostic use.</p>
+      <p class="mono footer-lic">MIT License · © Marek Sokol</p>
+    </div>
+    {cols.map((c) => (
+      <div class="footer-col">
+        <div class="microlabel footer-h">{c.h}</div>
+        <ul>{c.links.map((l) => <li><a href={l.u}>{l.t}</a></li>)}</ul>
+      </div>
+    ))}
+  </div>
+  <div class="container footer-deps muted">
+    Dependencies: PySide6/Qt (LGPLv3) · ONNX Runtime (MIT) · wfdb (MIT) · MNE-Python (BSD-3) · NumPy/SciPy · Zarr · PyArrow. MIT covers the app code, not the model weights: they are trained on public biosignal datasets and inherit those sources' terms, some (e.g. TUAR/TUH EEG, MIMIC-III-Ext-PPG) require credentialed access and are not redistributed, and WESAD is research-use only. See LICENSE-MODELS.
+  </div>
+</footer>
+
+<style>
+  .footer { border-top: 1px solid var(--border); margin-top: var(--sp-10); padding: var(--sp-8) 0 var(--sp-6); background: var(--surface-alt); }
+  .footer-inner { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 32px; padding-bottom: var(--sp-6); border-bottom: 1px solid var(--border-subtle); }
+  .footer-brand .brand-name { font-size: 16px; font-weight: 600; }
+  .brand-studio { color: var(--text-2); font-weight: 500; }
+  .footer-tag { margin: 8px 0; font-size: 13px; }
+  .footer-note { font-size: 13px; max-width: 40ch; }
+  .footer-lic { font-size: 12px; color: var(--text-muted); }
+  .footer-h { margin-bottom: var(--sp-3); }
+  .footer-col ul { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--sp-2); }
+  .footer-col a { color: var(--text-2); font-size: 13.5px; }
+  .footer-col a:hover { color: var(--text); }
+  .footer-deps { margin-top: var(--sp-5); font-size: 12px; max-width: 100ch; line-height: 1.7; }
+  @media (max-width: 720px) { .footer-inner { grid-template-columns: 1fr 1fr; } .footer-brand { grid-column: 1 / -1; } }
+</style>

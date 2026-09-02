@@ -1,0 +1,417 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Waveform from '../components/Waveform.astro';
+import TierBadge from '../components/TierBadge.astro';
+import { SITE, withBase } from '../lib/site';
+
+const features = [
+  { icon: '◇', cat: 'inference', t: 'On-device inference', d: 'Compact neural quality models run entirely on the CPU via ONNX Runtime, no GPU, no cloud, no training dependencies.' },
+  { icon: '⊹', cat: 'viewing', t: 'Automatic modality detection', d: 'ECG / PPG / EEG / EDA inferred from channel units, names and rate; the matching model auto-loads.' },
+  { icon: '▚', cat: 'quality', t: 'Ordinal Q0–Q3 overlay', d: 'Sliding-window scoring collapses into contiguous run-length quality segments, shown in the overview strip and segment list.' },
+  { icon: '≋', cat: 'scale', t: 'Scales out-of-core', d: 'Multi-hour recordings are analysed block-wise; the whole signal is never held in memory.' },
+  { icon: '✎', cat: 'workflow', t: 'Editable segmentation', d: 'Trim, split, merge or reclassify segments. The overlay, table and exports update live.' },
+  { icon: '◐', cat: 'quality', t: 'Confidence & uncertainty', d: 'Per-segment confidence plus predictive uncertainty, both from the temperature-calibrated distribution.' },
+  { icon: '↺', cat: 'quality', t: 'Recoverability advisory', d: 'Flags poor windows a band-pass filter would likely lift to usable (bSQI-corroborated for ECG/PPG).' },
+  { icon: '◆', cat: 'xai', t: 'Explainability (XAI)', d: 'On-demand saliency heatmap, group-Shapley feature attribution and a plain-language explanation per segment.' },
+  { icon: '⤓', cat: 'export', t: 'Broad export', d: 'CSV, TSV (BIDS events), JSON, Parquet, WFDB annotation, or MATLAB .mat, with corrections and provenance.' },
+];
+
+const modalities = [
+  { m: 'ECG', c: 'var(--m-ecg)', d: 'Beat morphology, rhythm, baseline wander, motion.', spec: '10 s @ 250 Hz windows',
+    path: 'M0 23 L18 23 L22 10 L26 36 L30 8 L34 23 L60 23 L66 22 L70 12 L74 34 L78 23 L110 23 L116 21 L120 10 L124 35 L128 23 L160 23 L168 22 L172 13 L176 33 L180 23 L210 23 L216 22 L220 11 L224 34 L228 23 L260 23' },
+  { m: 'PPG', c: 'var(--m-ppg)', d: 'Pulse morphology, motion and contact artifacts.', spec: 'bring your own weights',
+    path: 'M0 30 C 20 30, 26 8, 42 12 S 64 30, 86 30 C 106 30, 112 9, 128 13 S 150 30, 172 30 C 192 30, 198 8, 214 12 S 236 30, 260 30' },
+  { m: 'EEG', c: 'var(--m-eeg)', d: 'Muscle/EMG, powerline, electrode and blink artifacts.', spec: 'bring your own weights',
+    path: 'M0 23 Q 10 8 20 23 T 40 23 Q 50 34 60 23 T 80 20 Q 92 10 104 26 T 128 21 Q 140 33 152 22 T 176 24 Q 188 12 200 25 T 224 22 Q 236 30 248 23 T 260 23' },
+  { m: 'EDA', c: 'var(--m-eda)', d: 'Motion & HF contamination on a slow tonic base.', spec: '60 s @ 8 Hz windows',
+    path: 'M0 38 C 40 38, 60 20, 110 18 S 150 24, 180 22 C 210 20, 230 14, 260 12' },
+];
+
+const steps = [
+  { n: '1', t: 'Open', d: 'Header-only. Any-length recording opens instantly.' },
+  { n: '2', t: 'Detect', d: 'Modality inferred; the matching model loads.' },
+  { n: '3', t: 'Score', d: 'Sliding-window CPU inference → Q0–Q3 run-length segments.' },
+  { n: '4', t: 'Inspect', d: 'Read the verdict, confidence, artifacts and rationale.' },
+  { n: '5', t: 'Export', d: 'CSV / TSV / JSON / Parquet / WFDB / .mat.' },
+];
+
+const installs = {
+  source: { label: 'From source', cmd: 'cd app\npython -m venv .venv\n# activate the venv, then:\npip install -e .\nbiosqa-studio          # or: python -m biosqa.main', note: '◆ Runs on Windows, macOS and Linux. No recording needed, bundled dummy_data/ runs the full pipeline.', nc: 'var(--accent)' },
+  windows: { label: 'Windows', cmd: '# Download the standalone build from Releases,\n# unzip, and run:\n"BioSQA Studio.exe"', note: '✓ The frozen build is validated on Windows.', nc: 'var(--q3)' },
+  macos: { label: 'macOS', cmd: '# Run from source (a frozen build is not yet proven):\ncd app && python -m venv .venv\nsource .venv/bin/activate\npip install -e . && biosqa-studio', note: '⚠ macOS release build is a work in progress, use source.', nc: 'var(--q1)' },
+  linux: { label: 'Linux', cmd: '# Run from source (a frozen build is not yet proven):\ncd app && python -m venv .venv\nsource .venv/bin/activate\npip install -e . && biosqa-studio', note: '⚠ Linux release build is a work in progress, use source.', nc: 'var(--q1)' },
+};
+const cardJson = `{
+  "modality": "ecg",
+  "fs_hz": 250,
+  "l_m": 2500,
+  "class_order": ["Q0", "Q1", "Q2", "Q3"],
+  "normalization": { "kind": "instance" },
+  "model_version": "ecg-v3-dualbranch",
+  "calibration": { "temperatures": { "grade": 0.4 } }
+}`;
+---
+<BaseLayout wide>
+  <!-- HERO -->
+  <section class="hero">
+    <div class="container hero-grid">
+      <div class="hero-copy">
+        <span class="eyebrow"><span class="eyebrow-dot"></span>Alpha · on-device SQA</span>
+        <h1>See which segments of a recording you can <span class="accent">trust</span>.</h1>
+        <p class="lede">Ordinal signal-quality assessment for ECG, PPG, EEG and EDA, graded window by window, on-device, no cloud.</p>
+        <p class="subline muted">Detects the modality, runs a compact neural quality model over a sliding window entirely on the CPU, and resolves the result into contiguous Q0–Q3 quality segments alongside the trace.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="#install">Get started</a>
+          <a class="btn btn-ghost" href={withBase('/docs/getting-started/')}>Browse docs</a>
+          <a class="btn btn-text" href={SITE.repo}>GitHub →</a>
+        </div>
+        <div class="pills">
+          <span class="pill">MIT</span><span class="pill">on-device</span>
+          <span class="pill">CPU-only</span><span class="pill">Python ≥3.10</span>
+        </div>
+      </div>
+      <div class="scope-card">
+        <div class="scope-head mono">
+          <span>ECG · lead II · 250 Hz</span><span>noisy → clean</span>
+        </div>
+        <Waveform />
+        <div class="scope-foot mono">
+          <span>⊘ Q0 unacceptable</span><span>✓ Q3 excellent</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TRUST BAND -->
+  <section class="trust">
+    <div class="container trust-grid">
+      <div>
+        <p class="trust-p"><strong>BioSQA Studio opens a biosignal recording, detects its modality, and scores it on the CPU,</strong> <span class="text-2">resolving the result into contiguous quality segments so artifact-corrupted regions are obvious at a glance, with editable segmentation, review notes, and standard-format export.</span></p>
+        <p class="mono trust-build">Built with PySide6 (Qt 6) + QML · inference via ONNX Runtime on CPU · MIT licensed</p>
+      </div>
+      <div class="callout callout-warn">
+        <span class="callout-glyph">⚠</span>
+        <div><span class="callout-title">Not a medical device.</span> <span class="text-2">A research / engineering tool for exploring signal quality, not certified for clinical or diagnostic use.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section id="features" class="section">
+    <div class="container">
+      <div class="microlabel" data-reveal>Capabilities</div>
+      <h2 data-reveal>An instrument for seeing signal quality, not a black box.</h2>
+      <div class="feature-grid">
+        {features.map((f) => (
+          <div class="card feature" data-reveal>
+            <div class="feature-top"><span class="feature-icon mono">{f.icon}</span><span class="feature-cat mono">{f.cat}</span></div>
+            <h3>{f.t}</h3>
+            <p class="text-2">{f.d}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- MODALITIES (band) -->
+  <section id="modalities" class="section band">
+    <div class="container">
+      <div class="microlabel" data-reveal>Modalities</div>
+      <h2 data-reveal>Four signals, one contract.</h2>
+      <p class="text-2" data-reveal style="max-width:62ch;margin:-0.4rem 0 1.4rem">
+        Every modality is an independent model behind the same two-file contract. ECG and EDA
+        weights ship with the app; EEG and PPG open, plot and export, and grade as soon as you
+        supply your own weights, theirs are trained on cohorts whose licences forbid open
+        redistribution.
+      </p>
+      <div class="mod-grid">
+        {modalities.map((m) => (
+          <div class="card mod" style={`--mc:${m.c}`} data-reveal>
+            <div class="mod-head"><span class="mod-dot"></span><span class="mono mod-name">{m.m}</span></div>
+            <svg class="mod-wave" viewBox="0 0 260 46" preserveAspectRatio="none" aria-hidden="true">
+              <path d={m.path} fill="none" stroke="var(--mc)" stroke-width="1.3" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+            </svg>
+            <div class="qstrip" aria-hidden="true">
+              <span style="flex:0.9;background:repeating-linear-gradient(45deg,color-mix(in srgb,var(--q0) 80%,transparent) 0 3px,color-mix(in srgb,var(--q0) 35%,transparent) 3px 6px)"></span>
+              <span style="flex:1.1;background:var(--q1)"></span><span style="flex:1.4;background:var(--q2)"></span><span style="flex:2.6;background:var(--q3)"></span>
+            </div>
+            <p class="text-2 mod-d">{m.d}</p>
+            <div class="mono mod-spec">{m.spec}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section id="how" class="section">
+    <div class="container">
+      <div class="microlabel" data-reveal>How it works</div>
+      <h2 data-reveal>Open → Detect → Score → Inspect → Export.</h2>
+      <div class="flow">
+        {steps.map((s, i) => (
+          <div class="step" data-reveal>
+            <div class="step-top"><span class="step-n mono">{s.n}</span>{i < steps.length - 1 && <span class="step-conn"></span>}</div>
+            <h3>{s.t}</h3>
+            <p class="text-2 step-d">{s.d}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- SCREENSHOTS -->
+  <section id="screens" class="section">
+    <div class="container">
+      <div class="microlabel" data-reveal>The interface</div>
+      <h2 data-reveal>A working instrument beats any illustration.</h2>
+      <div class="shot shot-primary" data-reveal>
+        <div class="shot-bar"><span class="dot" style="background:var(--status-red)"></span><span class="dot" style="background:var(--q1)"></span><span class="dot" style="background:var(--q3)"></span><span class="mono shot-name">BioSQA Studio, workspace</span></div>
+        <img
+          class="shot-img ar-169"
+          src={withBase('shots/workspace.png')}
+          width="1920" height="1080"
+          loading="lazy" decoding="async"
+          alt="The BioSQA Studio workspace. A 3-minute ECG trace is overlaid with translucent run-length quality bands, green where the model graded Q3, amber Q1, red Q0, aligned with visible bursts of artifact. The right-hand AI Quality Inspector lists all ten segments with their grades, confidences and detected artifact types."
+        />
+      </div>
+      <div class="shot-row">
+        {[
+          { f: 'overview.png', c: 'Overview dashboard',
+            a: 'The recording overview: duration, percent usable, segment count and flagged-Q0 tiles above a quality-distribution donut, a per-modality quality-ribbon timeline, an artifact-type histogram, and the loaded model card.' },
+          { f: 'segmentation.png', c: 'Segmentation grid',
+            a: 'The quality-segmentation view: a run-length track across the full recording, with each segment as a card showing its real mini-waveform, tier badge, confidence and artifact tags.' },
+          { f: 'inspector.png', c: 'Segment inspector',
+            a: 'The segment inspector on a Q0 segment: the corrupted waveform, reshape controls, the AI rationale at 100 percent confidence, detected artifact types including muscle EMG, and the human-in-the-loop panel showing the model grade against an unreviewed decision.' },
+        ].map((s) => (
+          <div class="shot" data-reveal>
+            <img
+              class="shot-img ar-43"
+              src={withBase(`shots/${s.f}`)}
+              width="1280" height="960"
+              loading="lazy" decoding="async"
+              alt={s.a}
+            />
+            <div class="shot-cap mono muted">{s.c}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- QUALITY SCALE (band) -->
+  <section id="scale" class="section band">
+    <div class="container">
+      <div class="scale-head">
+        <div>
+          <div class="microlabel" data-reveal>The conceptual heart</div>
+          <h2 data-reveal>The Q0–Q3 ordinal scale.</h2>
+          <p class="text-2 scale-sub">An <strong>ordinal</strong> grade, not a pass/fail: adjacent grades are "closer" than distant ones. Color is never used alone, always paired with a glyph and a mono code.</p>
+        </div>
+        <label class="cb-switch" data-reveal>
+          <span class="cb-txt mono">CB-safe</span>
+          <button class="cb-track" data-toggle-cbtiers role="switch" aria-label="Toggle color-blind-safe tier palette"><span class="cb-knob"></span></button>
+        </label>
+      </div>
+      <div class="table-wrap scale-table" data-reveal>
+        <table>
+          <thead><tr><th>Grade</th><th>Practical meaning</th><th class="right">Usable for</th></tr></thead>
+          <tbody>
+            <tr><td><TierBadge tier="Q3" label size={34} /></td><td class="text-2">Dominant clean morphology.</td><td class="right mono">all analytics, HRV</td></tr>
+            <tr><td><TierBadge tier="Q2" label size={34} /></td><td class="text-2">Usable but not pristine.</td><td class="right mono">rate / coarse features</td></tr>
+            <tr><td><TierBadge tier="Q1" label size={34} /></td><td class="text-2">Partially corrupted.</td><td class="right mono">caveated use only</td></tr>
+            <tr><td><TierBadge tier="Q0" label size={34} /></td><td class="text-2">Dominated by artifact.</td><td class="right mono">discard</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="mono scale-note muted">Q0 carries a diagonal hatch; a blue↔orange color-blind-safe palette ships with a toggle.</p>
+    </div>
+  </section>
+
+  <!-- MODEL CONTRACT -->
+  <section id="models" class="section">
+    <div class="container model-grid">
+      <div data-reveal>
+        <div class="microlabel">Bring your own model</div>
+        <h2>A two-artifact contract, per modality.</h2>
+        <p class="text-2">The card drives all preprocessing, rate, window length, class order, normalization, so <strong>nothing is hard-coded</strong>. A missing or mismatched card is a hard error at load, never a silent fallback.</p>
+        <ul class="contract-list">
+          <li><span class="mono">models/&lt;modality&gt;.onnx</span> <span class="muted">input float32[1, 1, L]</span></li>
+          <li><span class="mono">models/&lt;modality&gt;.model_card.json</span> <span class="muted">the contract</span></li>
+        </ul>
+        <div class="callout callout-danger"><span class="callout-glyph">⊘</span><div><span class="callout-title">Fail-loud.</span> <span class="text-2">Card/graph disagreement on modality, shape, or the fused feature vector stops the load. You always know exactly what scored your signal.</span></div></div>
+        <a class="btn btn-ghost" href={withBase('/docs/models/')}>Read the model-card contract →</a>
+      </div>
+      <div class="code-card" data-reveal>
+        <div class="code-head"><span class="mono">ecg.model_card.json</span><button class="copy-btn mono" data-copy>copy</button></div>
+        <pre class="mono"><code>{cardJson}</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSTALL (band) -->
+  <section id="install" class="section band">
+    <div class="container">
+      <div class="microlabel" data-reveal>Install</div>
+      <h2 data-reveal>Install & run, no email gate.</h2>
+      <div class="tabs" role="tablist" aria-label="Install platform">
+        {Object.entries(installs).map(([k, v], i) => (
+          <button class:list={['tab', i === 0 && 'active']} data-tab={k} role="tab" aria-selected={i === 0 ? 'true' : 'false'}>{v.label}</button>
+        ))}
+      </div>
+      {Object.entries(installs).map(([k, v], i) => (
+        <div class:list={['tab-panel', i === 0 && 'active']} data-panel={k}>
+          <div class="code-card">
+            <div class="code-head"><span class="mono">terminal</span><button class="copy-btn mono" data-copy>copy</button></div>
+            <pre class="mono"><code>{v.cmd}</code></pre>
+            <div class="code-note mono" style={`color:${v.nc}`}>{v.note}</div>
+          </div>
+        </div>
+      ))}
+      <div class="pills install-pills" data-reveal>
+        <span class="pill">Windows ✓ frozen</span><span class="pill">macOS · source</span><span class="pill">Linux · source</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section final-cta">
+    <div class="container" data-reveal>
+      <h2>Open a recording and see the quality.</h2>
+      <div class="cta"><a class="btn btn-primary" href={withBase('/docs/getting-started/')}>Get started</a><a class="btn btn-ghost" href={SITE.repo}>Star on GitHub →</a></div>
+    </div>
+  </section>
+</BaseLayout>
+
+<script is:inline>
+  // install tabs
+  document.querySelectorAll('[data-tab]').forEach((btn) => btn.addEventListener('click', () => {
+    const k = btn.getAttribute('data-tab');
+    document.querySelectorAll('[data-tab]').forEach((b) => { const on = b === btn; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+    document.querySelectorAll('[data-panel]').forEach((p) => p.classList.toggle('active', p.getAttribute('data-panel') === k));
+  }));
+</script>
+
+<style>
+  .accent { color: var(--accent); }
+  .section { padding: 72px 0; }
+  .section > .container > .microlabel { margin-bottom: 8px; }
+  .band { background: var(--surface-alt); border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
+  .cta { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  /* hero */
+  .hero { padding: 150px 0 72px; }
+  .hero-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
+  .eyebrow { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--teal-text-c); background: var(--pill-bg-c);
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); padding: 6px 12px; border-radius: 100px; }
+  .eyebrow-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--status-red); }
+  .hero h1 { margin: 20px 0 16px; font-size: clamp(34px, 4.4vw, 54px); letter-spacing: -0.025em; line-height: 1.06; }
+  .lede { font-size: 18px; line-height: 1.55; max-width: 30em; color: var(--text); }
+  .subline { font-size: 15px; max-width: 34em; }
+  .hero .cta { margin: 24px 0 20px; }
+  .scope-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
+    padding: 26px 24px 20px; box-shadow: 0 24px 60px -30px rgba(0,0,0,.6); }
+  .scope-head, .scope-foot { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--text-muted); }
+  .scope-head { margin-bottom: 8px; } .scope-foot { margin-top: 12px; }
+
+  /* trust */
+  .trust { padding: 32px 0; border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); background: var(--surface-alt); }
+  .trust-grid { display: grid; grid-template-columns: 1.55fr 1fr; gap: 40px; align-items: center; }
+  .trust-p { font-size: 18px; line-height: 1.5; margin-bottom: 10px; }
+  .trust-build { font-size: 12px; color: var(--text-muted); margin: 0; }
+  .trust .callout { margin: 0; }
+
+  /* features */
+  .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 28px; }
+  .feature:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); transform: translateY(-2px); }
+  .feature-top { display: flex; align-items: center; gap: 10px; }
+  .feature-icon { color: var(--accent); font-size: 16px; }
+  .feature-cat { font-size: 9px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--text-muted); }
+  .feature h3 { margin: 10px 0 6px; font-size: 16px; }
+  .feature p { margin: 0; font-size: 13.5px; }
+
+  /* modalities */
+  .mod-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 28px; }
+  .mod-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .mod-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--mc); }
+  .mod-name { color: var(--mc); font-weight: 600; font-size: 17px; letter-spacing: 0.5px; }
+  .mod-wave { width: 100%; height: 40px; display: block; }
+  .qstrip { display: flex; gap: 2px; height: 6px; border-radius: 100px; overflow: hidden; margin: 12px 0; }
+  .mod-d { font-size: 12.5px; margin: 0 0 10px; }
+  .mod-spec { font-size: 10.5px; color: var(--text-muted); }
+
+  /* how it works */
+  .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 28px; }
+  .step-top { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .step-n { width: 30px; height: 30px; border-radius: 9px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    background: var(--pill-bg-c); color: var(--accent); display: grid; place-items: center; font-size: 13px; font-weight: 600; flex: none; }
+  .step-conn { height: 1px; flex: 1; background: var(--border); }
+  .step h3 { margin: 0 0 4px; font-size: 16px; }
+  .step-d { font-size: 13px; margin: 0; }
+
+  /* screenshots */
+  .shot { border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; background: var(--surface); margin-top: 28px; }
+  .shot-bar { display: flex; align-items: center; gap: 7px; padding: 9px 14px; background: var(--surface-alt); border-bottom: 1px solid var(--border); }
+  .shot-bar .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .shot-name { margin-left: 8px; font-size: 11px; color: var(--text-muted); }
+  .shot-body { display: grid; place-items: center; background: repeating-linear-gradient(45deg, var(--surface-alt) 0 11px, var(--surface-rail) 11px 22px); }
+  /* The screenshots are captured at exactly these ratios (tools/capture_shots.py), so object-fit
+     never actually crops -- aspect-ratio is here to reserve the box and stop layout shift while
+     the lazy image decodes. */
+  .shot-img { display: block; width: 100%; height: auto; object-fit: cover; background: var(--surface-alt); }
+  .ar-169 { aspect-ratio: 16/9; } .ar-43 { aspect-ratio: 4/3; }
+  .shot-cap { padding: 9px 12px; font-size: 11px; border-top: 1px solid var(--border); }
+  .shot-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .shot-row .shot { margin-top: 16px; }
+
+  /* quality scale */
+  .scale-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+  .scale-sub { max-width: 60ch; font-size: 15px; margin-top: 6px; }
+  .cb-switch { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+  .cb-txt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); }
+  .cb-track { width: 30px; height: 16px; border-radius: 100px; background: var(--border); border: 0; position: relative; cursor: pointer; padding: 0; transition: background .15s ease; }
+  .cb-knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--text-2); transition: left .15s ease; }
+  :global(:root[data-cbtiers='1']) .cb-track { background: var(--accent); }
+  :global(:root[data-cbtiers='1']) .cb-knob { left: 16px; background: var(--on-accent); }
+  .scale-table { margin-top: 22px; }
+  .scale-table td.right, .scale-table th.right { text-align: right; color: var(--text-muted); }
+  .scale-note { font-size: 12px; margin-top: 12px; }
+
+  /* model contract */
+  .model-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+  .contract-list { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+  .contract-list li::before { content: '◆'; color: var(--accent); margin-right: 8px; }
+  .contract-list .mono { color: var(--teal-text-c); font-size: 13px; }
+
+  /* code card */
+  .code-card { background: var(--surface-rail); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; }
+  .code-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .code-head .mono { font-size: 11.5px; color: var(--text-2); }
+  .copy-btn { font-size: 11px; color: var(--text-muted); background: transparent; border: 1px solid var(--border); border-radius: 5px; padding: 3px 9px; cursor: pointer; }
+  .copy-btn:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+  .code-card pre { border: 0; border-radius: 0; margin: 0; background: transparent; }
+  .code-note { padding: 10px 15px; border-top: 1px solid var(--border); font-size: 12px; }
+
+  /* install tabs */
+  .tabs { display: flex; gap: 4px; margin: 24px 0 16px; border-bottom: 1px solid var(--border); }
+  .tab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--text-muted); font-family: var(--font-sans);
+    font-size: 14px; font-weight: 500; padding: 8px 14px; cursor: pointer; margin-bottom: -1px; }
+  .tab.active { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+  .tab-panel { display: none; } .tab-panel.active { display: block; }
+  .install-pills { margin-top: 18px; }
+
+  .final-cta { text-align: center; }
+  .final-cta .cta { justify-content: center; margin-top: 20px; }
+
+  @media (max-width: 900px) {
+    .hero-grid, .trust-grid, .model-grid { grid-template-columns: 1fr; }
+    .hero { padding: 120px 0 56px; }
+    .feature-grid, .mod-grid { grid-template-columns: 1fr 1fr; }
+    .flow { grid-template-columns: 1fr 1fr; }
+    .shot-row { grid-template-columns: 1fr; }
+    .scale-head { flex-direction: column; align-items: flex-start; }
+  }
+  @media (max-width: 560px) { .feature-grid, .mod-grid, .flow { grid-template-columns: 1fr; } }
+</style>

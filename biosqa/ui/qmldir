@@ -1,0 +1,8 @@
+singleton Theme 1.0 Theme.qml
+ActivityRail 1.0 ActivityRail.qml
+Controls 1.0 Controls.qml
+FileTree 1.0 FileTree.qml
+Minimap 1.0 Minimap.qml
+SettingsOverlay 1.0 SettingsOverlay.qml
+SignalView 1.0 SignalView.qml
+TopBar 1.0 TopBar.qml

@@ -1,0 +1,101 @@
+BioSQA Studio, model weights: provenance and inherited terms
+=============================================================
+
+The MIT License in `LICENSE` covers the **source code** of BioSQA Studio. This
+file records what the trained weights in `models/` are derived from and what
+those sources require.
+
+Two models are shipped: `ecg.onnx` and `eda.onnx`. Both are derived exclusively
+from datasets whose published terms are open and attribution-based, verified
+individually against each provider's own licence page (see the table below).
+Redistribution of these two is **attribution-required**: you may redistribute
+and use them, including commercially, provided the dataset citations below
+travel with them.
+
+**No dataset is redistributed with this app**, and no model here is derived from
+credentialed, non-commercial or data-use-agreement material, see "Why EEG and
+PPG weights are not bundled" at the end.
+
+This is a **provenance statement, not legal advice and not a compliance
+certificate**. The terms below are summarised from the dataset providers' own
+published conditions and have not been reviewed by a lawyer. If you intend to
+redistribute these weights, embed them in a product, or use them commercially,
+check each source's current terms yourself.
+
+The same information is available machine-readably in the `license` block of
+each `models/<modality>.model_card.json`.
+
+
+ecg.onnx  (v3-dualbranch-spectral)
+----------------------------------
+Trained on the ECG corpus of `store_v2`, plus synthetic artifact augmentation:
+
+  PhysioNet/CinC Challenge 2011          Open Data Commons Attribution v1.0
+  European ST-T Database                 Open Data Commons Attribution v1.0
+  MIT-BIH Malignant Ventricular Ectopy   Open Data Commons Attribution v1.0
+  MIT-BIH Noise Stress Test DB (NSTDB)   Open Data Commons Attribution v1.0
+  MIT-BIH Supraventricular Arrhythmia    Open Data Commons Attribution v1.0
+  BUT QDB                                CC BY 4.0
+  PTB-XL                                 CC BY 4.0
+
+All seven are open-access: no data use agreement, no credentialing, and no
+non-commercial restriction. Every one requires **attribution**, so an MIT notice
+alone is not sufficient, carry the citations in `README.md` § Datasets forward
+with any redistribution.
+
+
+eda.onnx  (v3-combined-fusion-ordlogit)
+---------------------------------------
+Trained on the EDA corpus of `store_v3`: three cohorts, verified against that
+store's segment index:
+
+  EDABE                                     CC BY 4.0
+                                            (Mendeley Data 10.17632/w8fxrg4pv5.2)
+  EDA-Artifact-Detection (UT Dallas)        BSD 3-Clause
+  EDA-Artifact-Detection (Alan Walks Wales) BSD 3-Clause
+
+CC BY 4.0 and BSD 3-Clause are both permissive and both explicitly permit
+redistribution of derived works. BSD 3-Clause additionally requires that its
+copyright notice and disclaimer accompany redistributions in binary form, and
+forbids using the copyright holders' names to endorse derived products; both
+conditions are met by carrying this file and the citations in `README.md`.
+
+WESAD (EDA) and PPG-DaLiA (EDA) are part of the wider *research* corpus but are
+**not** in this shipped model's training store.
+
+
+Why EEG and PPG weights are not bundled
+---------------------------------------
+Models for both modalities exist and the application supports both signal types,
+but their weights are not distributed here, because their training corpora carry
+terms that open redistribution would not honour:
+
+  PPG   MIMIC-III-Ext-PPG is under the PhysioNet Credentialed Health Data
+        License 1.5.0, access requires a signed data use agreement, and the
+        licence forbids sharing that access onward. PhysioNet's own practice is
+        to publish MIMIC-derived *model weights* under the same credentialed
+        access rather than openly. Independently of that, WESAD's terms permit
+        "scientific, non-commercial purposes" only, which an MIT-licensed
+        release would not respect.
+
+  EEG   TUAR (TUH EEG Artifact Corpus) is released under a signed Neural
+        Engineering Data Consortium agreement. That agreement restricts
+        redistribution of *the data* and is silent on derived model weights, so
+        redistribution of these weights is neither granted nor clearly refused.
+        It is withheld pending clarification from the data provider rather than
+        because it is known to be prohibited.
+
+Opening an EEG or PPG recording in the application therefore loads and displays
+the signal but reports that no model is bundled for that modality. Supply your
+own `models/eeg.onnx` + `models/eeg.model_card.json` (or `ppg.*`) to enable it;
+the handshake contract is documented in `models/README.md`.
+
+
+If you need weights for the other modalities
+--------------------------------------------
+Retrain on open-access cohorts only and re-export with
+`reproducibility/scripts/export_*.py`. The architecture, training loop and
+export path are all in `reproducibility/`. Note that removing the restricted
+PPG cohorts costs most of that corpus's subject diversity (MIMIC alone supplies
+500 of its 580 subjects), so a compliant PPG model needs additional open-access
+cohorts rather than a straight subtraction.
